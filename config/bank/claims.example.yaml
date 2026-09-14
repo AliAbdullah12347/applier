@@ -1,0 +1,62 @@
+# ============================================================================
+# claims.example.yaml — TEMPLATE. Copy to claims.yaml and fill with YOUR numbers.
+#
+# THE SINGLE SOURCE OF TRUTH FOR EVERY FIGURE THAT APPEARS ON YOUR RESUME.
+#
+# The renderer physically cannot emit a numeral that is not registered here.
+# Phrasings in atoms.yaml reference these as {{C.id}} slots.
+#
+# Each claim carries:
+#   value      what gets printed
+#   evidence   how you would prove it if an interviewer pushed back
+#   status     verified | needs_check | RETIRED
+#
+# The test for `verified`: could you reconstruct this number, out loud, in sixty
+# seconds, under questioning? If not, it is `needs_check`.
+#
+# `RETIRED` claims never render. Retired entries stay in the file deliberately,
+# so the reason is recorded and nobody re-adds the number six months later.
+# This is how a metric you decided was indefensible stays gone.
+# ============================================================================
+
+company_a:
+  runtime_before:
+    value: "3 hours"
+    evidence: "Timed on the production scheduler before the change; run logs retained."
+    status: verified
+  runtime_after:
+    value: "11 minutes"
+    evidence: "Same scheduler, same dataset, after the index change."
+    status: verified
+  bugs:
+    value: "25+"
+    evidence: "Ticket count in the tracker, filed by me during the release cycle."
+    status: verified
+  satisfaction_pct:
+    value: "40%"
+    evidence: >-
+      RETIRED. Example of a claim that should not survive review: no baseline was
+      ever measured, the number came from an impression, and it would collapse the
+      moment an interviewer asked "measured how?".
+      A single number you cannot defend costs more than the ten you can.
+    status: RETIRED
+
+project_one:
+  users:
+    value: "120"
+    evidence: "Distinct signups in the first month, from the analytics dashboard."
+    status: needs_check
+
+org:
+  members_before:
+    value: "60"
+    evidence: "Membership roster at the start of term."
+    status: verified
+  members_after:
+    value: "140"
+    evidence: "Membership roster at the end of term."
+    status: verified
+  budget:
+    value: "$4,000"
+    evidence: "Annual budget line approved by the student government."
+    status: verified

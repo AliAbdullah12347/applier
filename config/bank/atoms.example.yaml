@@ -1,0 +1,77 @@
+# ============================================================================
+# atoms.example.yaml — TEMPLATE. Copy to atoms.yaml and fill with YOUR work.
+#
+# Every achievement, stored once, in three lengths. The tailoring engine SELECTS
+# and ORDERS these per job; it never writes new prose. That is what makes the
+# output truthful by construction rather than by review.
+#
+# Numbers appear ONLY as {{C.path}} slots resolved from claims.yaml. A phrasing
+# containing a bare numeral is a bug and the lint gate rejects it. Run:
+#     applier bank lint
+#
+# Budget 4-6 hours to author this properly. It is the highest-leverage work in
+# the whole system: nothing downstream is better than the bank it draws from.
+# ============================================================================
+
+atoms:
+
+  - id: example_optimization
+    section: experience          # education | experience | projects | leadership
+    group: exp_company_a         # atoms sharing a group render under one heading
+    tags: [python, performance, algorithms, backend]
+    lead_for: [ai_ml, default]   # job families where this atom should lead
+    phrasings:
+      short: "Cut a batch job from {{C.company_a.runtime_before}} to {{C.company_a.runtime_after}}."
+      medium: "Cut nightly batch runtime from {{C.company_a.runtime_before}} to {{C.company_a.runtime_after}} by replacing per-row lookups with a precomputed index."
+      long: "Cut nightly batch runtime from {{C.company_a.runtime_before}} to {{C.company_a.runtime_after}} by replacing per-row database lookups with a precomputed in-memory index, removing the job from the critical path of the morning report."
+
+  - id: example_reliability
+    section: experience
+    group: exp_company_a
+    tags: [testing, reliability, ci, debugging]
+    phrasings:
+      short: "Found {{C.company_a.bugs}} edge-case failures through regression testing."
+      medium: "Caught {{C.company_a.bugs}} edge-case failures through systematic regression testing before release."
+      long: "Caught {{C.company_a.bugs}} edge-case failures through systematic regression testing, and added the reproductions to CI so the same class of bug could not recur."
+
+  - id: example_project
+    section: projects
+    group: project_one
+    tags: [typescript, react, fullstack, api]
+    phrasings:
+      short: "Full-stack app with authentication and durable storage."
+      medium: "Built and deployed a full-stack application with authentication, durable storage and a typed API layer."
+      long: "Built and deployed a full-stack application with authentication, durable storage and a typed API layer, used by {{C.project_one.users}} people in its first month."
+
+  - id: example_leadership
+    section: leadership
+    group: leadership_one
+    tags: [leadership, organizing, communication]
+    phrasings:
+      short: "Grew a student organisation from {{C.org.members_before}} to {{C.org.members_after}} members."
+      medium: "As lead, grew membership from {{C.org.members_before}} to {{C.org.members_after}} by launching recurring programming."
+      long: "As lead, grew membership from {{C.org.members_before}} to {{C.org.members_after}} by launching recurring programming and managing a {{C.org.budget}} annual budget."
+
+
+# ---------------------------------------------------------------------------
+# How many atoms each section may contribute, and in what order they render.
+# ---------------------------------------------------------------------------
+sections:
+  education:  { order: 1, min_atoms: 0, max_atoms: 2 }
+  experience: { order: 2, min_atoms: 4, max_atoms: 11 }
+  projects:   { order: 3, min_atoms: 2, max_atoms: 6 }
+  leadership: { order: 4, min_atoms: 0, max_atoms: 2 }
+
+# ---------------------------------------------------------------------------
+# The skills block. Recruiters keyword-search the ATS database by hand, so a
+# resume without one is invisible to that search.
+#
+# Only list things you could defend in an interview. This is the single most
+# effective *legitimate* keyword lever available -- there is no reason to reach
+# for anything dishonest when this is sitting unused.
+# ---------------------------------------------------------------------------
+skills:
+  Languages:  [Python, TypeScript, SQL]
+  Frameworks: [React, FastAPI]
+  Data:       [PostgreSQL, SQLite]
+  Tools:      [Git, Linux, Docker]

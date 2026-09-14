@@ -1,0 +1,143 @@
+%% applier — tailored resume
+%% Generated. Do not edit by hand; edit config/bank/atoms.yaml instead.
+%%
+%% Jinja delimiters are remapped so this stays valid LaTeX:
+%%   \VAR{x}   variable      \BLOCK{for ...}   control flow
+\documentclass[\VAR{font_pt}pt,letterpaper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage[left=\VAR{margin_in}in,right=\VAR{margin_in}in,top=\VAR{margin_in}in,bottom=\VAR{margin_in}in]{geometry}
+
+%% ---------------------------------------------------------------------------
+%% ATS TEXT-LAYER CORRECTNESS. Do not remove any of these four lines.
+%%
+%% Without them pdflatex hyphen-splits words across line breaks in the extracted
+%% text layer ("scaffolding" -> "scaf-" + "folding"). Parsers do not rejoin them,
+%% so any keyword landing on a break becomes invisible to keyword search.
+%% glyphtounicode makes ligatures and glyphs extract as real characters.
+%% ---------------------------------------------------------------------------
+\input{glyphtounicode}
+\pdfgentounicode=1
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\sloppy
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+\pagestyle{empty}
+
+\titleformat{\section}{\vspace{-4pt}\scshape\raggedright\large}
+  {}{0em}{}[\color{black}\titlerule\vspace{-5pt}]
+
+\newcommand{\entry}[4]{%
+  \vspace{1pt}\item[]%
+  \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+    \textbf{#1} & #2 \\
+    \textit{\small#3} & \textit{\small #4} \\
+  \end{tabular*}\vspace{-6pt}%
+}
+\newcommand{\bullets}{\begin{itemize}[leftmargin=0.15in,label={--},topsep=1pt,itemsep=\VAR{item_sep}pt,parsep=0pt]}
+\newcommand{\bulletsend}{\end{itemize}\vspace{-4pt}}
+\newcommand{\point}[1]{\item\small{#1 \vspace{-1pt}}}
+
+\begin{document}
+
+%% ------------------------------------------------------------------ header --
+\begin{center}
+  {\LARGE \textbf{\VAR{identity.full_name|tex}}} \\ \vspace{3pt}
+  \small
+  \VAR{identity.phone|tex} $|$
+  \href{mailto:\VAR{identity.email}}{\VAR{identity.email|tex}} $|$
+  \href{\VAR{identity.linkedin}}{\VAR{identity.linkedin_display|tex}} $|$
+  \href{\VAR{identity.github}}{\VAR{identity.github_display|tex}}
+\BLOCK{if identity.website}
+  $|$ \href{\VAR{identity.website}}{\VAR{identity.website_display|tex}}
+\BLOCK{endif}
+\end{center}
+\vspace{-6pt}
+
+%% --------------------------------------------------------------- education --
+\section{Education}
+\begin{itemize}[leftmargin=0in,label={}]
+\BLOCK{for e in education}
+  \entry{\VAR{e.institution|tex}}{\VAR{e.location|tex}}
+        {\VAR{e.degree|tex}, \VAR{e.majors|tex} \textbar{} GPA: \VAR{e.gpa|tex}}
+        {Expected \VAR{e.expected_graduation|tex}}
+\BLOCK{endfor}
+\BLOCK{if education_atoms}
+  \bullets
+  \BLOCK{for line in education_atoms}
+    \point{\VAR{line}}
+  \BLOCK{endfor}
+  \bulletsend
+\BLOCK{endif}
+\end{itemize}
+\vspace{-10pt}
+
+%% ------------------------------------------------------------------ skills --
+%% Placed high on purpose: recruiters keyword-search the ATS database by hand,
+%% and a resume with no skills block is invisible to that search.
+\section{Technical Skills}
+\begin{itemize}[leftmargin=0.15in,label={}]
+  \small{\item[]
+  \BLOCK{for group, items in skills.items()}
+    \textbf{\VAR{group|tex}}: \VAR{items|join(', ')|tex} \\
+  \BLOCK{endfor}
+  }
+\end{itemize}
+\vspace{-14pt}
+
+%% -------------------------------------------------------------- experience --
+\BLOCK{if experience}
+\section{Experience}
+\begin{itemize}[leftmargin=0in,label={}]
+\BLOCK{for role in experience}
+  \entry{\VAR{role.title|tex}}{\VAR{role.dates|tex}}{\VAR{role.org|tex}}{\VAR{role.location|tex}}
+  \bullets
+  \BLOCK{for line in role.points}
+    \point{\VAR{line}}
+  \BLOCK{endfor}
+  \bulletsend
+\BLOCK{endfor}
+\end{itemize}
+\vspace{-8pt}
+\BLOCK{endif}
+
+%% ---------------------------------------------------------------- projects --
+\BLOCK{if projects}
+\section{Projects}
+\begin{itemize}[leftmargin=0in,label={}]
+\BLOCK{for p in projects}
+  \item[]\small{\textbf{\VAR{p.name|tex}}\BLOCK{if p.stack} \textbar{} \textit{\VAR{p.stack|tex}}\BLOCK{endif}}
+  \bullets
+  \BLOCK{for line in p.points}
+    \point{\VAR{line}}
+  \BLOCK{endfor}
+  \bulletsend
+\BLOCK{endfor}
+\end{itemize}
+\vspace{-8pt}
+\BLOCK{endif}
+
+%% -------------------------------------------------------------- leadership --
+\BLOCK{if leadership}
+\section{Leadership}
+\begin{itemize}[leftmargin=0in,label={}]
+\BLOCK{for l in leadership}
+  \entry{\VAR{l.title|tex}}{\VAR{l.dates|tex}}{\VAR{l.org|tex}}{}
+  \bullets
+  \BLOCK{for line in l.points}
+    \point{\VAR{line}}
+  \BLOCK{endfor}
+  \bulletsend
+\BLOCK{endfor}
+\end{itemize}
+\BLOCK{endif}
+
+\end{document}

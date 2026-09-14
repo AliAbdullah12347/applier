@@ -1,0 +1,60 @@
+# ---------------------------------------------------------------------------
+# PERSONAL DATA -- never tracked.
+# This repo is designed to be safe to make PUBLIC as a portfolio project.
+# Everything identifying lives in files listed here and stays on your machine.
+# (NOTE: git does not support trailing comments on a pattern line. Comments
+#  must be on their own line, or the whole line becomes part of the pattern.)
+# ---------------------------------------------------------------------------
+config/profile.yaml
+config/bank/claims.yaml
+config/bank/atoms.yaml
+PLAN.md
+STATE.md
+CLAUDE.md
+private/
+
+# secrets & credentials -- NEVER commit
+.env
+config/secrets.yaml
+
+*.key
+*.pem
+.browser-profile/
+.playwright/
+token.json
+credentials.json
+*.session
+
+# generated artifacts
+data/*.db
+data/*.sqlite3
+applications/
+out/
+*.aux
+*.log
+*.out
+*.fls
+*.synctex.gz
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# research working files (local only, not part of the product)
+research/
+_git_migration_backup/
+tool-results/
