@@ -1,0 +1,158 @@
+# ============================================================================
+# profile.example.yaml — TEMPLATE. Copy to profile.yaml and run `applier setup`.
+# The real profile.yaml is gitignored because it holds PII.
+#
+# The system asks you for anything marked ASK exactly ONCE (run `applier setup`),
+# writes the answer back here, and never asks again.
+#
+# Fields marked  [LEGAL]  are NEVER generated, guessed, paraphrased or fuzzy-matched
+# by an LLM. They are copied verbatim from this file. For visa-dependent applicants
+# these statements reappear on government forms, so an invented answer can become a
+# misrepresentation problem. That is why they live here and not in a prompt.
+# ============================================================================
+
+identity:
+  full_name: "ASK"
+  preferred_name: "ASK"
+  first_name: "ASK"
+  last_name: "ASK"
+  pronouns: "ASK"                        # optional; used only when a form asks
+  email: "ASK"
+  email_personal: "ASK"                  # for account creation + verification polling.
+                                         # Use a personal inbox, NOT a university Workspace account:
+                                         # Workspace admins can block third-party apps.
+  phone: "ASK"
+  date_of_birth: "ASK"                   # [LEGAL] some forms require it
+  linkedin: "ASK"
+  github: "ASK"
+  website: "ASK"
+
+address:
+  line1: "ASK"
+  line2: ""
+  city: "ASK"
+  state: "ASK"
+  postal_code: "ASK"
+  country: "United States"
+  # Permanent/home address — some international forms require both
+  permanent:
+    line1: "ASK"
+    city: "ASK"
+    state: "ASK"
+    postal_code: "ASK"
+    country: "Pakistan"
+
+# ---------------------------------------------------------------------------
+# [LEGAL] WORK AUTHORIZATION — the highest-risk block in the entire system.
+# ---------------------------------------------------------------------------
+work_authorization:
+  citizenship: "ASK"
+  us_citizen: false
+  us_permanent_resident: false
+  visa_status: "ASK"
+  work_permit_status: "UNRESOLVED"       # CONFIRMED | DENIED | UNRESOLVED
+                                         # Set from your institution's WRITTEN answer.
+                                         # The wording below switches off this flag.
+  requires_sponsorship_now: false        # Student work authorisation needs no sponsorship
+  requires_sponsorship_future: true      # Full-time employment eventually will
+
+  # Canonical phrasings. The system uses these verbatim; it never improvises.
+  # Two different questions get two different honest answers:
+  answers:
+    # "Are you legally authorized to work in <country> ?"  (role-scoped, present tense)
+    authorized_now_us: "Yes"
+    authorized_now_us_qualifier: >-
+      ASK
+    # "Will you now or in the future require sponsorship?"  (unqualified, future tense)
+    require_sponsorship: "Yes"
+    require_sponsorship_qualifier: >-
+      ASK
+    # Non-US markets
+    authorized_now_uk: "No"
+    authorized_now_eu: "No"
+    authorized_now_canada: "No"
+    authorized_now_singapore: "No"
+    non_us_qualifier: >-
+      ASK
+
+  # Never answer "Yes" to a bare unqualified sponsorship question without the
+  # qualifier text attached. If a form gives no free-text box for the qualifier,
+  # the system halts and asks you.
+  halt_if_no_qualifier_field: true
+
+demographics:
+  # Voluntary EEO fields. Blank = "decline to self-identify", which is always a
+  # valid answer. Fill only what you want disclosed.
+  gender: "ASK"
+  ethnicity: "ASK"
+  veteran_status: "I am not a protected veteran"
+  disability_status: "ASK"
+  requires_accommodation: "No"
+
+education:
+  - institution: "ASK"
+    location: "ASK"
+    degree: "ASK"                        # [LEGAL] Your ACTUAL degree. Never upgrade it.
+    majors: ["ASK"]
+    gpa: "ASK"
+    gpa_scale: "4.00"
+    start: "ASK"
+    end: "ASK"
+    expected_graduation: "ASK"           # [LEGAL]
+    cip_code: "ASK"                      # international students: from your I-20, if applicable.
+    honors:
+      - "ASK"
+    coursework:
+
+availability:
+  earliest_start: "ASK"
+  latest_end: "ASK"
+  willing_to_relocate: true
+  relocation_notes: "ASK"
+  remote_ok: true
+  hybrid_ok: true
+  onsite_ok: true
+
+compensation:
+  # Most forms require a number. Refusing to answer often blocks submission.
+  expected_hourly_usd: "ASK"
+  expected_salary_usd: "ASK"
+  currency: "USD"
+  negotiable: true
+  answer_if_required: "Open / negotiable — I'd defer to your standard intern range."
+
+references:
+  - name: "ASK"
+    title: "ASK"
+    org: "ASK"
+    email: "ASK"
+    relationship: "ASK"
+    may_contact: "ASK"
+
+languages:
+  - { language: "ASK", level: "ASK" }
+
+links:
+  portfolio: "ASK"
+  resume_pdf: "out/resume_latest.pdf"
+
+# ---------------------------------------------------------------------------
+# Voice — how generated cover letters and free-text answers should sound.
+# ---------------------------------------------------------------------------
+voice:
+  tone: "direct, concrete, quietly confident; no filler, no superlatives about myself"
+  avoid_phrases:
+    - "I am passionate about"
+    - "I would be thrilled"
+    - "leverage my skills"
+    - "fast-paced environment"
+    - "wear many hats"
+    - "as an aspiring"
+    - "I am writing to express my interest"
+  prefer:
+    - lead with a specific technical result, not an adjective
+    - name the actual technology and the actual number
+    - one concrete sentence about why THIS company, sourced from something real
+  cover_letter_words: [220, 320]
+  short_answer_words: [90, 160]
+  long_answer_words: [180, 300]

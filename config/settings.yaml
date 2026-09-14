@@ -1,0 +1,341 @@
+# ============================================================================
+# applier — master settings
+# ----------------------------------------------------------------------------
+# Everything in this file is live-editable. Defaults are tuned for a STEM
+# undergraduate targeting internships and, later, full-time roles across the
+# US / Europe / Canada / Asia / Middle East.
+#
+# You should not NEED to change anything here to run the system. Change things
+# when you want different behaviour, not to make it work.
+#
+# Env vars override any value here:  APPLIER__LLM__PRIMARY__API_KEY=sk-...
+# (double underscore separates nesting levels)
+# ============================================================================
+
+meta:
+  profile_name: "default"
+  timezone: "America/New_York"      # MUST match where you physically are.
+                                    # Greenhouse fraud detection flags timezone/IP mismatch.
+
+# ----------------------------------------------------------------------------
+# LLM — provider-agnostic. Swap `provider` + `model` + `api_key` and everything
+# downstream keeps working. Fallbacks are tried in order when primary fails
+# (rate limit, quota, outage). Cost/latency notes are from Sept 2026 research.
+# ----------------------------------------------------------------------------
+llm:
+  primary:
+    provider: "gemini"              # gemini | openai | anthropic | openrouter | groq | mistral | ollama | azure_openai
+    model: "gemini-3-flash"         # ~1500 req/day free tier. NOT gemini-3.8-flash (~20/day).
+    api_key_env: "GEMINI_API_KEY"   # read from env or OS keychain; never stored in this file
+    max_output_tokens: 4096
+    temperature: 0.3                # low: we want accurate, not creative
+    timeout_s: 90
+
+  # Tried in order if primary fails. Leave empty to disable fallback.
+  fallbacks:
+    - provider: "openrouter"
+      model: "meta-llama/llama-3.3-70b-instruct:free"
+      api_key_env: "OPENROUTER_API_KEY"
+    - provider: "groq"
+      model: "llama-3.3-70b-versatile"
+      api_key_env: "GROQ_API_KEY"
+
+  # Per-task model overrides. Cheap models for bulk parsing, best model for
+  # anything a human will read.
+  task_models:
+    jd_parse:        "primary"      # bulk, high volume, structured extraction
+    field_mapping:   "primary"      # universal form filler — needs to be good
+    cover_letter:    "primary"      # a human reads this
+    essay_answer:    "primary"      # a human reads this
+    resume_select:   "primary"
+
+  # PRIVACY. Free tiers of some providers state that human reviewers may read
+  # your inputs. When true, strip identity before every outbound call and
+  # re-attach locally at render time.
+  redact_pii: true
+  redact_fields: [full_name, phone, email, address, linkedin, github, gpa, visa_status, date_of_birth]
+
+  # Stay inside free tiers. The router serialises requests and backs off on 429.
+  rate_limit:
+    max_concurrent: 1               # Mistral free = 1 req/s; parallelism gets you throttled
+    requests_per_minute: 14
+    retry_attempts: 4
+    retry_backoff_s: [2, 8, 30, 90]
+
+  # Prompt caching: keep the stable prefix byte-identical so providers can cache it.
+  stable_prefix_caching: true
+
+# ----------------------------------------------------------------------------
+# DISCOVERY — where jobs come from. All free, all ToS-safe.
+# ----------------------------------------------------------------------------
+discovery:
+  poll_interval_minutes: 30         # SimplifyJobs refreshes ~:00 and :30
+  max_new_per_cycle: 400
+
+  sources:
+    simplify:
+      enabled: true
+      url: "https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/.github/scripts/listings.json"
+      conditional_get: true         # ETag / If-Modified-Since — polite and fast
+      stream_parse: true            # file is >12MB; never load whole
+    zshah_tracker:
+      enabled: true
+      url: "https://raw.githubusercontent.com/zshah101/Automated-List-Of-Summer-2027-and-Fall-2026-Tech-Internships/main/data/internships.csv"
+    greenhouse:  { enabled: true }  # boards-api.greenhouse.io  (no auth)
+    lever:       { enabled: true }  # api.lever.co/v0/postings  (no auth)
+    ashby:       { enabled: true }  # api.ashbyhq.com/posting-api (no auth)
+    workable:    { enabled: true }
+    recruitee:   { enabled: true }
+    smartrecruiters: { enabled: true }
+    arbeitnow:   { enabled: true }  # EU / Germany
+    adzuna:      { enabled: false, api_key_env: "ADZUNA_KEY", markets: [gb, ca, de, ae] }
+
+  # HARD BANS — ToS violations that would cost more than they return.
+  # LinkedIn account is load-bearing for referrals; Handshake ban costs the
+  # university-exclusive employer pipeline. Do not enable these.
+  never_automate:
+    - linkedin.com
+    - joinhandshake.com
+    - indeed.com
+    - glassdoor.com
+    - simplify.jobs
+
+  # Workday is polled via aggregators, never directly: it sits behind Akamai
+  # bot management that rate-limits by source IP across ALL tenants at once.
+  workday_direct_poll: false
+
+# ----------------------------------------------------------------------------
+# SEARCH DEFINITION — which roles to look for. Edit freely.
+# ----------------------------------------------------------------------------
+search:
+  seasons: ["Summer 2027", "Summer 2028"]
+  role_kinds: ["internship"]        # add "new_grad" / "full_time" when the time comes
+
+  titles_include:
+    - software engineer
+    - software engineering intern
+    - swe intern
+    - machine learning
+    - ml engineer
+    - ai engineer
+    - research engineer
+    - security engineer
+    - security analyst
+    - application security
+    - quantitative
+    - quant trader
+    - quant researcher
+    - data engineer
+    - backend
+    - full stack
+    - platform engineer
+    - infrastructure
+
+  titles_exclude:
+    - senior
+    - staff
+    - principal
+    - manager
+    - director
+    - lead
+    - sales
+    - recruiter
+    - " ii"
+    - " iii"
+
+  locations_preferred:
+    - { country: US,  weight: 1.00 }
+    - { country: UK,  weight: 0.85 }
+    - { country: DE,  weight: 0.85 }
+    - { country: NL,  weight: 0.85 }
+    - { country: CH,  weight: 0.85 }
+    - { country: IE,  weight: 0.80 }
+    - { country: SG,  weight: 0.90 }   # Work Holiday Pass = self-serve authorisation for some students
+    - { country: HK,  weight: 0.75 }
+    - { country: AE,  weight: 0.80 }   # Dubai
+    - { country: QA,  weight: 0.70 }
+    - { country: SA,  weight: 0.70 }
+    - { country: CA,  weight: 0.30 }   # IEC eligibility is nationality-dependent; check yours
+    - { country: REMOTE, weight: 0.95 }
+
+  min_score_to_queue: 0.55          # below this, never even tailored
+  min_score_to_autoapply: 0.70      # below this, waits for your review
+
+# ----------------------------------------------------------------------------
+# ELIGIBILITY GATES — evaluated BEFORE any tailoring work. A gate failure
+# zeroes the score; it is never a weighted term. These save the most time.
+# ----------------------------------------------------------------------------
+gates:
+  graduation_date: "2028-05"
+
+  # Auto-reject: roles the applicant can categorically never win.
+  hard_reject_phrases:
+    - "U.S. Citizen"
+    - "US Citizenship required"
+    - "Lawful Permanent Resident"
+    - "security clearance"
+    - "active clearance"
+    - "ITAR"
+    - "export control"
+    - "Public Trust"
+    - "must be authorized to work in the United States without sponsorship"
+    - "will not sponsor"
+    - "unable to sponsor"
+    - "does not offer any type of employment-based immigration sponsorship"
+    - "no visa sponsorship"
+    - "will not provide any assistance or sign any documentation"
+
+  # First/second-year-only programmes. Delete these if you ARE a first/second year.
+  hard_reject_programs:
+    - "STEP"
+    - "Microsoft Explore"
+    - "Citadel Ignite"
+    - "Meta University"
+    - "LinkedIn First Play"
+    - "NVIDIA Ignite"
+
+  # Positive signals — rank these UP, never used to hard-filter.
+  sponsor_friendly_phrases:
+    - "international students are encouraged to apply"
+    - "we accept students eligible for CPT/OPT"
+    - "visa sponsorship is available"
+    - "we sponsor work visas"
+    - "sponsorship available"
+
+  # Per-employer caps and lockouts. Violating these is unrecoverable in-cycle.
+  application_caps:
+    google.com:        { max: 3, window_days: 30 }
+    goldmansachs.com:  { max: 4, window_days: 3650, note: "4 business/location combinations total" }
+    jumptrading.com:   { max: 1, window_days: 3650, note: "ONE region only — they ask explicitly" }
+    optiver.com:       { max: 1, window_days: 240,  note: "8-month global lockout TRIGGERED BY STARTING the OA" }
+    bytedance.com:     { max: 2, window_days: 3650 }
+    tiktok.com:        { max: 2, window_days: 3650 }
+
+  # Require explicit confirmation before burning an irreversible slot.
+  high_stakes_confirm: [optiver.com, jumptrading.com, janestreet.com]
+
+# ----------------------------------------------------------------------------
+# RESUME TAILORING
+# ----------------------------------------------------------------------------
+tailor:
+  bank_path: "config/bank"
+  template: "templates/resume/classic.tex.j2"
+  variants:
+    default:  "templates/resume/classic.tex.j2"
+    research: "templates/resume/research_cv.tex.j2"   # RISE / Max Planck / ETH / EPFL
+    europass: "templates/resume/europass.tex.j2"      # ETH SSRF wants this format
+
+  max_pages: 1
+  autofit:
+    enabled: true
+    max_compiles: 3
+    density_ladder: [1.00, 0.96, 0.92, 0.88, 0.84]   # spacing multipliers
+    font_pt_floor: 10
+    margin_in_floor: 0.45
+
+  # Which experience leads, by job family. Reordering is the primary lever —
+  # the engine selects and orders; it never invents prose.
+  lead_experience:
+    ai_ml:    "research_isham"
+    quant:    "research_isham"
+    research: "research_isham"
+    security: "project_image_poisoning"
+    graphics: "exp_alterea"
+    game:     "exp_alterea"
+    default:  "research_isham"
+
+  # TRUTHFULNESS. These are not style preferences.
+  guardrails:
+    numbers_only_from_claims_ledger: true   # renderer cannot emit an unregistered numeral
+    forbid_new_proper_nouns: true
+    forbid_unmatched_jd_keywords: true      # gaps go to the gap report, never into the document
+    require_atom_provenance: true
+
+  # Every generated PDF is re-extracted and checked before it can be sent.
+  verify:
+    enabled: true
+    fail_action: "delete"           # delete | quarantine
+    checks:
+      page_count_exact: 1
+      keywords_present_verbatim: true
+      no_hyphen_split_keywords: true        # pdflatex splits words in the TEXT LAYER
+      contact_fields_intact: true
+      min_extracted_chars: 1500
+      no_replacement_chars: true            # U+FFFD
+      every_numeral_traces_to_claim: true
+      no_invisible_text: true               # see integrity.forbid_hidden_text
+
+# ----------------------------------------------------------------------------
+# APPLYING
+# ----------------------------------------------------------------------------
+apply:
+  mode: "auto"                      # auto | review | dry_run
+  headless: false                   # MUST be false: Greenhouse flags headless/datacenter signals
+  browser_channel: "chrome"
+  profile_dir: ".browser-profile"   # persistent — logins survive between runs
+  max_per_day: 25
+  max_per_hour: 6
+  human_delay_ms: [400, 1800]       # randomised, human-scale pacing
+  screenshot_every_step: true       # audit trail
+  artifact_dir: "applications"
+
+  # Known-ATS fast paths. Unknown formats fall through to the universal filler.
+  adapters: [greenhouse, lever, ashby, workday, smartrecruiters, icims, workable, recruitee, teamtailor, bamboohr]
+
+  universal_filler:
+    enabled: true                   # THE differentiator: handles ANY form, not a fixed list
+    max_fields_per_page: 80
+    max_pages_per_application: 12
+    confidence_threshold: 0.80      # below this the field goes to the ask-queue
+    reread_and_verify: true         # re-read every field after filling; a silently-empty field is worse than a blank one
+
+  accounts:
+    auto_create: true
+    password_length: 24
+    store: "keyring"                # Windows Credential Manager. NEVER plaintext.
+    email_verification:
+      enabled: true
+      method: "imap"                # imap | gmail_api | manual
+      poll_seconds: 15
+      timeout_seconds: 300
+
+  captcha:
+    # No solver. Solving CAPTCHAs is both a ToS violation and explicitly
+    # out of scope. Detected -> pause, notify, hand off to you.
+    on_detect: "pause_and_notify"
+    notify: [desktop, log]
+
+# ----------------------------------------------------------------------------
+# INTEGRITY — hard rules the system enforces on itself.
+# Read docs/INTEGRITY.md for why each of these exists.
+# ----------------------------------------------------------------------------
+integrity:
+  forbid_hidden_text: true          # no white-on-white, no 0pt, no metadata keyword blobs,
+                                    # no text addressed to a model. Detected in production
+                                    # at 86-93% precision; detection shows it to a recruiter.
+  forbid_fabricated_numbers: true
+  forbid_llm_on_legal_fields: true  # work auth / citizenship / visa / name / DOB / grad date
+                                    # come from your verified answer bank, never from a model.
+  halt_on_ambiguous_legal_field: true
+  require_truthful_answer_provenance: true
+  log_every_submitted_answer: true
+
+# ----------------------------------------------------------------------------
+# SCHEDULING — background operation
+# ----------------------------------------------------------------------------
+schedule:
+  daemon_enabled: true
+  discover_cron: "*/30 * * * *"
+  apply_window: { start: "09:00", end: "22:00" }   # human-plausible hours, local
+  digest_cron: "0 18 * * 0"                        # weekly Sunday 6pm
+  pause_on_consecutive_failures: 3
+
+notify:
+  desktop: true
+  email: false
+  on_events: [needs_input, captcha, application_submitted, application_failed, high_stakes_confirm, weekly_digest]
+
+logging:
+  level: "INFO"
+  file: "data/applier.log"
+  redact_secrets: true

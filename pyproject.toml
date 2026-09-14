@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "applier"
+version = "0.1.0"
+description = "Autonomous end-to-end job discovery and application system"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.scripts]
+applier = "applier.cli:main"
+
+[tool.setuptools]
+packages = ["applier", "applier.llm", "applier.apply", "applier.apply.adapters",
+            "applier.discover", "applier.score", "applier.tailor",
+            "applier.track", "applier.report", "applier.util"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
