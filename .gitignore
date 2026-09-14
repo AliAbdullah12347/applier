@@ -12,6 +12,7 @@ PLAN.md
 STATE.md
 CLAUDE.md
 private/
+tools/
 
 # secrets & credentials -- NEVER commit
 .env
