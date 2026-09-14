@@ -321,6 +321,56 @@ integrity:
   log_every_submitted_answer: true
 
 # ----------------------------------------------------------------------------
+# OUTREACH — referrals and networking.
+#
+# The system identifies people, works out how to reach them, and drafts the
+# message. It NEVER sends. You read, edit and send yourself.
+#
+# Referrals convert roughly 10x better than cold applications, so this is the
+# highest-value hour in the whole system. It is also the easiest to ruin: a
+# message with no genuine reason to exist is spam with your real name on it.
+# The caps below are enforced in code, not suggested.
+# ----------------------------------------------------------------------------
+outreach:
+  enabled: true
+
+  # Hard caps. The drafter refuses to generate beyond these rather than warning.
+  max_per_day: 4
+  max_per_company_per_week: 2
+  max_lifetime_per_company_no_reply: 3
+  follow_ups_per_thread: 1            # exactly one, at +5 business days, then stop
+  follow_up_after_days: 5
+
+  # A draft with no verifiable hook_source_url is never produced. This is the
+  # single rule that separates outreach from mass mail. Do not set it false.
+  require_hook_source: true
+
+  # First contact asks for a conversation, never a referral. Asking for a
+  # referral cold converts far worse and burns the contact.
+  first_ask: "a 15-minute conversation"
+  never_ask_first: ["referral", "job", "resume review"]
+
+  # Where people come from. LinkedIn is absent on purpose: automated access
+  # violates its User Agreement and enforcement is account-level. Losing the
+  # account costs more than any scraper returns, so LinkedIn is used BY HAND
+  # and its output arrives here as a CSV.
+  sources:
+    github_org:    { enabled: true }
+    github_repo:   { enabled: true }
+    team_page:     { enabled: true }
+    manual_csv:    { enabled: true, path: "data/contacts_inbox.csv" }
+    linkedin:      { enabled: false, reason: "ToS prohibits automated access" }
+
+  # One Hunter.io lookup per COMPANY (not per person), cached forever.
+  # Free tier is 50 credits/month; per-person lookups exhaust it in a day.
+  email_inference:
+    enabled: true
+    api_key_env: "HUNTER_API_KEY"
+    one_lookup_per_domain: true
+
+  output_dir: "out/outreach"
+
+# ----------------------------------------------------------------------------
 # SCHEDULING — background operation
 # ----------------------------------------------------------------------------
 schedule:

@@ -12,6 +12,10 @@ Everything runs through one entry point:
     applier asks             clear the ask queue (asked once, never again)
     applier status           funnel stats and recent outcomes
     applier config set-key   store an API key in the OS keychain
+
+    applier outreach harvest --github-org <org> | --repo o/r | --team-page <url> | --csv <f>
+    applier outreach draft   write messages for harvested contacts (never sends)
+    applier outreach list    show contacts and their stage
 """
 
 from __future__ import annotations
@@ -34,6 +38,8 @@ from .config import (
 app = typer.Typer(add_completion=False, help="Autonomous end-to-end job applications.")
 config_app = typer.Typer(help="Configuration and secrets.")
 app.add_typer(config_app, name="config")
+reach_app = typer.Typer(help="Referrals and networking. Drafts only -- never sends.")
+app.add_typer(reach_app, name="outreach")
 con = Console()
 
 
@@ -372,6 +378,139 @@ def status() -> None:
         con.print("[dim]High => knockout questions (work auth, grad year) are the bottleneck, "
                   "not your resume.\nLow/silence => volume and timing.[/dim]")
 
+
+
+# --------------------------------------------------------------------------- #
+# outreach
+# --------------------------------------------------------------------------- #
+@reach_app.command("harvest")
+def outreach_harvest(
+    github_org: str = typer.Option(None, "--github-org", help="Public members of a GitHub org."),
+    repo: str = typer.Option(None, "--repo", help="Contributors to owner/repo."),
+    team_page: str = typer.Option(None, "--team-page", help="A company's public team page URL."),
+    csv_file: Path = typer.Option(None, "--csv", help="Names you gathered by hand."),
+    limit: int = typer.Option(25, help="Max people per source."),
+) -> None:
+    """Find people worth contacting. Sources that permit automated access only."""
+    settings, profile = _load()
+    from .db import get_db
+    from .outreach.discover import (ContactStore, domain_pattern, from_csv,
+                                    from_github_org, from_github_repo,
+                                    from_team_page, synthesize_email)
+
+    db = get_db()
+    store = ContactStore(db, settings)
+    people = []
+
+    if github_org:
+        people += list(from_github_org(github_org, limit=limit))
+    if repo and "/" in repo:
+        owner, name = repo.split("/", 1)
+        people += list(from_github_repo(owner, name, limit=limit))
+    if team_page:
+        people += list(from_team_page(team_page, limit=limit))
+    if csv_file:
+        people += list(from_csv(csv_file))
+
+    if not people:
+        con.print("[yellow]No sources given.[/yellow] Try --github-org, --repo, "
+                  "--team-page or --csv.")
+        con.print("[dim]Tip: ten minutes in your alumni directory, pasted into a CSV, "
+                  "beats any scraper and carries no account risk.[/dim]")
+        raise typer.Exit(1)
+
+    patterns: dict[str, str | None] = {}
+    saved = 0
+    for p in people:
+        if p.domain and not p.email:
+            if p.domain not in patterns:
+                patterns[p.domain] = domain_pattern(p.domain, db)
+            p.email = synthesize_email(p, patterns[p.domain])
+        store.upsert(p)
+        saved += 1
+
+    with_hook = sum(1 for p in people if p.hook_source_url)
+    con.print(f"[green]{saved}[/green] contacts stored "
+              f"([bold]{with_hook}[/bold] with a citable hook).")
+    if with_hook < saved:
+        con.print(f"[dim]{saved - with_hook} have no hook source and will be skipped when "
+                  f"drafting. Add one, or drop them.[/dim]")
+
+
+@reach_app.command("draft")
+def outreach_draft(
+    limit: int = typer.Option(4, help="How many to draft (respects the daily cap)."),
+) -> None:
+    """Write outreach messages. Nothing is sent."""
+    settings, profile = _load()
+    from .db import get_db
+    from .llm import Router
+    from .outreach.discover import ContactStore, Person
+    from .outreach.draft import NoHookError, draft_message, save_batch
+
+    db = get_db()
+    store = ContactStore(db, settings)
+    router = Router(settings, profile, db)
+
+    rows = store.pending(limit=limit * 3)
+    if not rows:
+        con.print("[yellow]No pending contacts.[/yellow] Run `applier outreach harvest` first.")
+        raise typer.Exit(1)
+
+    drafts, skipped = [], []
+    for row in rows:
+        if len(drafts) >= limit:
+            break
+        p = Person(name=row["name"] or "", company=row["company"] or "",
+                   domain=row["domain"] or "", role=row["role"] or "",
+                   email=row["email"] or "", source=row["source"] or "",
+                   hook_fact=row["hook_fact"] or "",
+                   hook_source_url=row["hook_source_url"] or "")
+        ok, why = store.can_contact(p)
+        if not ok:
+            skipped.append(f"{p.name}: {why}")
+            continue
+        try:
+            drafts.append(draft_message(p, profile, settings, router))
+            con.print(f"  [green]drafted[/green] {p.name}")
+        except NoHookError as e:
+            skipped.append(str(e).split(":", 1)[0] + ": no verifiable hook")
+        except Exception as e:
+            skipped.append(f"{p.name}: {e}")
+
+    if skipped:
+        con.print(f"\n[dim]skipped {len(skipped)}:[/dim]")
+        for s in skipped[:8]:
+            con.print(f"  [dim]- {s}[/dim]")
+
+    if not drafts:
+        con.print("\n[yellow]Nothing drafted.[/yellow]")
+        raise typer.Exit(1)
+
+    out = Path(settings.get("outreach.output_dir", "out/outreach"))
+    path = save_batch(drafts, out, db)
+    con.print(f"\n[bold green]{len(drafts)} draft(s)[/bold green] -> {path}")
+    con.print("[dim]Nothing was sent. Read, edit, and send them yourself.[/dim]")
+
+
+@reach_app.command("list")
+def outreach_list() -> None:
+    """Contacts and where each one stands."""
+    _load()
+    from .db import get_db
+    rows = get_db().q("SELECT name,company,role,email,stage,hook_source_url FROM contacts "
+                      "ORDER BY stage, company LIMIT 100")
+    if not rows:
+        con.print("[yellow]No contacts yet.[/yellow]")
+        return
+    t = Table(title="contacts")
+    for col in ("Name", "Company", "Role", "Channel", "Stage", "Hook"):
+        t.add_column(col, overflow="fold")
+    for r in rows:
+        t.add_row(r["name"] or "", r["company"] or "", (r["role"] or "")[:22],
+                  r["email"] or "-", r["stage"] or "",
+                  "[green]yes[/green]" if r["hook_source_url"] else "[red]none[/red]")
+    con.print(t)
 
 # --------------------------------------------------------------------------- #
 @config_app.command("set-key")
