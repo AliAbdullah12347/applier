@@ -40,7 +40,7 @@ address:
     city: "ASK"
     state: "ASK"
     postal_code: "ASK"
-    country: "Pakistan"
+    country: "ASK"
 
 # ---------------------------------------------------------------------------
 # [LEGAL] WORK AUTHORIZATION — the highest-risk block in the entire system.
