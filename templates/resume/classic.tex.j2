@@ -1,8 +1,9 @@
 %% applier — tailored resume
 %% Generated. Do not edit by hand; edit config/bank/atoms.yaml instead.
 %%
-%% Jinja delimiters are remapped so this stays valid LaTeX:
-%%   \VAR{x}   variable      \BLOCK{for ...}   control flow
+%% Jinja delimiters are remapped so this file stays valid LaTeX.
+%% Variables and control blocks use backslash-prefixed delimiters; see
+%% applier/tailor/render.py JINJA_ENV_KW for the exact mapping.
 \documentclass[\VAR{font_pt}pt,letterpaper]{article}
 
 \usepackage[T1]{fontenc}
@@ -32,8 +33,8 @@
 \setlength{\tabcolsep}{0in}
 \pagestyle{empty}
 
-\titleformat{\section}{\vspace{-4pt}\scshape\raggedright\large}
-  {}{0em}{}[\color{black}\titlerule\vspace{-5pt}]
+\titleformat{\section}{\nopagebreak\vspace{-4pt}\scshape\raggedright\large\bfseries}
+  {}{0em}{}[\titlerule\vspace{-5pt}]
 
 \newcommand{\entry}[4]{%
   \vspace{1pt}\item[]%
@@ -73,7 +74,7 @@
 \BLOCK{if education_atoms}
   \bullets
   \BLOCK{for line in education_atoms}
-    \point{\VAR{line}}
+    \point{\VAR{line|tex}}
   \BLOCK{endfor}
   \bulletsend
 \BLOCK{endif}
@@ -101,7 +102,7 @@
   \entry{\VAR{role.title|tex}}{\VAR{role.dates|tex}}{\VAR{role.org|tex}}{\VAR{role.location|tex}}
   \bullets
   \BLOCK{for line in role.points}
-    \point{\VAR{line}}
+    \point{\VAR{line|tex}}
   \BLOCK{endfor}
   \bulletsend
 \BLOCK{endfor}
@@ -117,7 +118,7 @@
   \item[]\small{\textbf{\VAR{p.name|tex}}\BLOCK{if p.stack} \textbar{} \textit{\VAR{p.stack|tex}}\BLOCK{endif}}
   \bullets
   \BLOCK{for line in p.points}
-    \point{\VAR{line}}
+    \point{\VAR{line|tex}}
   \BLOCK{endfor}
   \bulletsend
 \BLOCK{endfor}
@@ -133,7 +134,7 @@
   \entry{\VAR{l.title|tex}}{\VAR{l.dates|tex}}{\VAR{l.org|tex}}{}
   \bullets
   \BLOCK{for line in l.points}
-    \point{\VAR{line}}
+    \point{\VAR{line|tex}}
   \BLOCK{endfor}
   \bulletsend
 \BLOCK{endfor}

@@ -171,16 +171,25 @@ def verify_pdf(pdf: Path, *, expect_keywords: list[str], contact: list[str],
             fail(f"contact details did not survive extraction: {', '.join(lost)}")
 
     # Every numeral on the page must trace to a registered claim.
+    # Contact details and the claim values themselves are legitimate sources, so
+    # both are tokenised into the allowed set -- otherwise a phone number and a
+    # "$5,000" split by the tokeniser produce warnings that train you to ignore
+    # the check entirely, which defeats its purpose.
     if checks.get("every_numeral_traces_to_claim", True):
-        allowed = set()
-        for v in claims_used.values():
-            allowed.update(re.findall(r"\d[\d,.]*", str(v)))
+        allowed: set[str] = set()
+        for v in list(claims_used.values()) + list(contact):
+            raw = str(v)
+            allowed.update(re.findall(r"\d[\d,.]*", raw))
+            allowed.update(re.findall(r"\d+", raw))          # sub-tokens: 5,000 -> 5, 000
+            allowed.add(re.sub(r"[^\d]", "", raw))            # digits-only form
         for tok in re.findall(r"(?<![\w/])\d[\d,.]*(?![\w/])", flat):
             if tok in allowed:
                 continue
             if re.fullmatch(r"(19|20)\d{2}", tok):      # years
                 continue
             if tok in {"1", "2", "3", "4", "5"}:         # list/GPA scale noise
+                continue
+            if re.sub(r"[^\d]", "", tok) in allowed:     # same digits, different punctuation
                 continue
             rep.warnings.append(f"numeral {tok!r} not traced to a claim")
 
