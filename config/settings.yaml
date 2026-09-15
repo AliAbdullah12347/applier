@@ -228,7 +228,7 @@ tailor:
   max_pages: 1
   autofit:
     enabled: true
-    max_compiles: 3
+    max_compiles: 5
     density_ladder: [1.00, 0.96, 0.92, 0.88, 0.84]   # spacing multipliers
     font_pt_floor: 10
     margin_in_floor: 0.45

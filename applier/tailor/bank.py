@@ -60,6 +60,7 @@ class Bank:
         self.atoms: list[Atom] = []
         self.sections: dict[str, dict] = {}
         self.skills: dict[str, list[str]] = {}
+        self.roles: dict[str, dict] = {}
         self.claims: dict[str, dict] = {}
         self._load()
 
@@ -71,6 +72,7 @@ class Bank:
         adata = yaml.safe_load(apath.read_text(encoding="utf-8")) or {}
         self.sections = adata.get("sections", {})
         self.skills = adata.get("skills", {})
+        self.roles = adata.get("roles", {})
         for raw in adata.get("atoms", []):
             self.atoms.append(Atom(
                 id=raw["id"], section=raw.get("section", "experience"),
@@ -163,6 +165,7 @@ class Bank:
 
         per_section: dict[str, int] = {}
         chosen: list[tuple[Atom, str]] = []
+        seen_groups: set[str] = set()
         used_lines = 0
         claims_used: dict[str, str] = {}
 
@@ -176,12 +179,17 @@ class Bank:
                 size = {"long": "medium", "medium": "short", "short": ""}[size]
             if not size:
                 continue                          # every phrasing blocked by a retired claim
+            # A bullet costs its wrapped line count; the FIRST atom of a group
+            # also pays for the role heading it renders under (title + org line).
             cost = 1 + (len(a.text(size)) // 105)
+            if a.group not in seen_groups:
+                cost += 2
             if used_lines + cost > line_budget:
                 continue
             text, used = self.resolve(a.text(size))
             claims_used.update(used)
             chosen.append((a, size))
+            seen_groups.add(a.group)
             per_section[a.section] = per_section.get(a.section, 0) + 1
             used_lines += cost
 
