@@ -82,14 +82,76 @@ def discover_jobs(settings: Config, profile: Config, *, limit: int | None = None
 
 
 # --------------------------------------------------------------------------- #
+# enrich
+# --------------------------------------------------------------------------- #
+def enrich_descriptions(settings: Config, *, limit: int = 60, console=None) -> int:
+    """Fetch full job descriptions for promising postings.
+
+    This is not optional polish. Aggregate feeds carry only title, company,
+    location and URL -- no description. Every eligibility gate that matters
+    (citizenship requirements, security clearance, ITAR, explicit "we do not
+    sponsor") is expressed in the description text, so gating on a feed row
+    alone silently passes everything. Enrichment happens BEFORE final gating.
+
+    Only postings whose title already looks relevant are fetched, so this costs
+    a few dozen requests rather than thousands.
+    """
+    from .discover import sources as S
+
+    con = _console(console)
+    db = get_db()
+
+    # Target the postings most likely to matter, not simply the newest. Fetching
+    # by recency wastes the budget on roles that would never be queued anyway and
+    # leaves the actual candidates ungated.
+    includes = [t.lower() for t in settings.get("search.titles_include", []) if t]
+    if includes:
+        clause = " OR ".join("LOWER(title) LIKE ?" for _ in includes)
+        params = tuple(f"%{t}%" for t in includes) + (limit,)
+        rows = db.q(
+            "SELECT id,url,ats FROM jobs "
+            "WHERE (description IS NULL OR length(description) < 200) "
+            f"AND status IN ('new','scored','queued') AND ({clause}) "
+            "ORDER BY CASE status WHEN 'queued' THEN 0 ELSE 1 END, id DESC "
+            "LIMIT ?", params)
+    else:
+        rows = db.q(
+            "SELECT id,url,ats FROM jobs "
+            "WHERE (description IS NULL OR length(description) < 200) "
+            "AND status IN ('new','scored','queued') ORDER BY id DESC LIMIT ?", (limit,))
+    n = 0
+    for r in rows:
+        try:
+            raw = S.fetch_single(r["url"])
+        except Exception:
+            continue
+        if raw and raw.description and len(raw.description) > 200:
+            db.run("UPDATE jobs SET description=? WHERE id=?", (raw.description, r["id"]))
+            n += 1
+    if n:
+        con.print(f"[dim]fetched {n} full job description(s)[/dim]")
+    return n
+
+
+# --------------------------------------------------------------------------- #
 # rank
 # --------------------------------------------------------------------------- #
-def rank_jobs(settings: Config, profile: Config, *, console=None) -> list[dict]:
+def rank_jobs(settings: Config, profile: Config, *, enrich: bool = True,
+              console=None) -> list[dict]:
     from .score.gates import check_gates, score_job
 
     con = _console(console)
     db = get_db()
-    rows = db.q("SELECT * FROM jobs WHERE status IN ('new','scored') ORDER BY id DESC LIMIT 4000")
+
+    if enrich:
+        # Gate on real text, never on an empty feed row.
+        enrich_descriptions(settings, console=con)
+
+    # 'queued' is included deliberately: a re-rank after enrichment must be able
+    # to re-evaluate jobs it queued on thinner data, otherwise they disappear from
+    # the queue on the second pass.
+    rows = db.q("SELECT * FROM jobs WHERE status IN ('new','scored','queued') "
+                "ORDER BY id DESC LIMIT 4000")
     out: list[dict] = []
     min_q = float(settings.get("search.min_score_to_queue", 0.55))
 
@@ -107,7 +169,10 @@ def rank_jobs(settings: Config, profile: Config, *, console=None) -> list[dict]:
              job["id"]),
         )
         if gate.passed and sc.value >= min_q:
-            out.append({**job, "score": sc.value, "why": sc.why})
+            thin = len(job.get("description") or "") < 200
+            out.append({**job, "score": sc.value,
+                        "why": sc.why + (" [UNVERIFIED: no description]" if thin else ""),
+                        "description_missing": thin})
 
     out.sort(key=lambda j: -j["score"])
     con.print(f"[dim]scored {len(rows)}, queued {len(out)}[/dim]")
@@ -149,6 +214,8 @@ def apply_to_url(url: str, settings: Config, profile: Config, *, console=None) -
 def _execute_application(job: dict, settings: Config, profile: Config,
                          db: Database, *, console=None) -> str:
     """The shared core. Identical for pasted links and self-found jobs."""
+    from .apply.accounts import AccountStore, MailVerifier
+    from .apply.adapters import for_ats
     from .apply.answers import AnswerBank, HaltForInput
     from .apply.browser import Session, detect_ats
     from .apply.universal import UniversalFiller
@@ -199,7 +266,29 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         target = job.get("apply_url") or job["url"]
         sess.goto(target)
         ats = detect_ats(target, page.content()[:20000])
-        con.print(f"[dim]ATS: {ats}[/dim]")
+        adapter = for_ats(ats)
+        con.print(f"[dim]ATS: {ats} (adapter: {adapter.name})[/dim]")
+
+        # Workday and friends run a separate tenant per employer, each needing its
+        # own account. Create it once; the persistent browser profile carries the
+        # session forward on every later application to the same company.
+        if adapter.per_tenant_accounts and settings.get("apply.accounts.auto_create", True):
+            store = AccountStore(db, settings, profile)
+            creds = store.get(target)
+            if creds is None:
+                creds = store.create(target, ats=ats)
+                con.print(f"[dim]created account for {creds.domain} "
+                          f"(password in OS keychain)[/dim]")
+                if settings.get("apply.accounts.email_verification.enabled", True):
+                    link = MailVerifier(settings, profile).wait_for_link(
+                        sender_domain=creds.domain)
+                    if link:
+                        sess.goto(link)
+                        store.mark_verified(target)
+                        con.print("[dim]email verification link followed[/dim]")
+                    else:
+                        con.print("[yellow]no verification email found; "
+                                  "the account may need manual confirmation[/yellow]")
 
         filler = UniversalFiller(bank, router, settings, profile)
         max_pages = int(settings.get("apply.universal_filler.max_pages_per_application", 12))
@@ -230,10 +319,14 @@ def _execute_application(job: dict, settings: Config, profile: Config,
             if res.mismatches:
                 con.print(f"[yellow]{len(res.mismatches)} field(s) did not take[/yellow]")
 
-            # resume upload, wherever it appears
+            # resume upload, using the platform's known selectors first
             if resume_path:
-                for sel in ('input[type=file]',):
+                for sel in adapter.resume_inputs or ['input[type=file]']:
                     if sess.upload(sel, resume_path):
+                        break
+            if cover_path and adapter.cover_inputs:
+                for sel in adapter.cover_inputs:
+                    if sel.startswith('input[type=file]') and sess.upload(sel, cover_path):
                         break
 
             shot = sess.screenshot(artifact / f"step-{step}.png")
@@ -241,6 +334,16 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                 shots.append(str(shot))
 
             selector, is_submit = filler.find_advance(page)
+            if not selector and adapter.advance_selectors:
+                # Fall back to the platform's known controls when text matching
+                # fails (Workday labels buttons by data-automation-id, not text).
+                for cand in adapter.advance_selectors:
+                    try:
+                        if page.query_selector(cand):
+                            selector, is_submit = cand, False
+                            break
+                    except Exception:
+                        continue
             if not selector:
                 break
             if is_submit:
@@ -324,7 +427,17 @@ def autonomous_loop(settings: Config, profile: Config, *, max_apps: int | None =
             queued = []
 
         threshold = float(settings.get("search.min_score_to_autoapply", 0.70))
-        batch = [j for j in queued if j["score"] >= threshold][:per_hour]
+        eligible = [j for j in queued if j["score"] >= threshold]
+
+        # A posting with no description was never actually gated: the citizenship,
+        # clearance and "we do not sponsor" checks all read the description text.
+        # Applying to one blind is exactly the wasted application this system
+        # exists to prevent, so it waits for enrichment instead.
+        ungated = [j for j in eligible if j.get("description_missing")]
+        if ungated:
+            con.print(f"[yellow]{len(ungated)} job(s) held back — no job description, "
+                      f"so eligibility gates could not run.[/yellow]")
+        batch = [j for j in eligible if not j.get("description_missing")][:per_hour]
         if not batch:
             con.print("[dim]nothing above the auto-apply threshold this cycle[/dim]")
 

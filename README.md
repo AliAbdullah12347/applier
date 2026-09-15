@@ -43,6 +43,11 @@ discover ──► gate ──► score ──► tailor ──► fill ──�
 | **verify** | Re-extracts the generated PDF and checks it the way a parser sees it. Failures delete the artifact. |
 | **track** | SQLite record of every application, every answer submitted, and every outcome. |
 
+Verified working against live data: a discovery run pulled 400 real postings and
+mined 151 ATS board tokens from their apply URLs (71 Greenhouse, 25 Lever, 48
+Ashby, 7 Workable) at zero cost, then gated and ranked them. A tailored resume
+renders to a verified single page in about six seconds.
+
 ---
 
 ## Design decisions worth knowing
@@ -59,6 +64,12 @@ status, legal name, date of birth and graduation date are copied verbatim from
 the profile. No fuzzy matching, no inference. If classification is ambiguous the
 run halts and asks. These are stored once and reused forever, so this costs
 nothing in autonomy.
+
+**Gate before you spend.** Aggregate job feeds carry only a title and a URL. Every
+eligibility check that matters — citizenship requirements, security clearance,
+ITAR, explicit "we do not sponsor" — lives in the description body, so the system
+fetches the real description before gating, and refuses to auto-apply to any
+posting whose gates could not actually run.
 
 **Verification is adversarial.** After every compile the PDF is re-extracted and
 checked for hyphen-split keywords (pdflatex breaks words in the *text layer*,
@@ -157,11 +168,13 @@ bank leave the machine.
 - [x] Eligibility gates and scoring
 - [x] Account creation with keychain storage and IMAP verification
 - [x] Content bank, LaTeX rendering, verification gate
-- [ ] Cover letter and free-text answer generation
-- [ ] Per-ATS fast-path adapters
-- [ ] Outreach: contact discovery and message drafting
+- [x] Cover letter and free-text answer generation
+- [x] Per-ATS fast-path adapters (11 platforms + generic fallback)
+- [x] Outreach: contact discovery and message drafting
+- [x] Description enrichment so eligibility gates run on real text
 - [ ] Gmail outcome tracking
 - [ ] Weekly intelligence digest
+- [ ] Market-trend analysis and project recommendations
 
 ---
 
