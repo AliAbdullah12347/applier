@@ -41,10 +41,11 @@ from ..db import Database, now
 QUESTION_TAXONOMY: list[tuple[str, list[str], bool]] = [
     # ---- LEGAL / immigration -------------------------------------------- #
     ("sponsorship_future", [
-        r"will you (now or )?(in the future )?require .*sponsorship",
-        r"require .*(visa|immigration) sponsorship .*(now|future)",
-        r"do you (now or in the future )?(require|need) sponsorship",
-        r"future.*sponsorship",
+        r"(will|do|would) you .{0,40}(require|need) .{0,30}sponsor",
+        r"(require|need) .{0,30}sponsorship",
+        r"future.*sponsor",
+        r"sponsorship (now or in the future|for employment)",
+        r"immigration (support|sponsorship|assistance)",
     ], True),
     ("authorized_now", [
         r"are you (legally )?(authorized|authorised|eligible) to work",
@@ -107,14 +108,34 @@ QUESTION_TAXONOMY: list[tuple[str, list[str], bool]] = [
 
 LEGAL_IDS = {qid for qid, _, legal in QUESTION_TAXONOMY if legal}
 
+# Any question containing one of these is immigration- or identity-adjacent.
+# If the taxonomy does not recognise it, the run stops and asks rather than
+# guessing or handing it to a model. An unrecognised phrasing of "are you a
+# citizen?" is exactly the case where falling through is most costly, so the
+# default for this whole area is halt, not best-effort.
+LEGAL_TRIPWIRES = (
+    "citizen", "citizenship", "sponsor", "sponsorship", "visa", "immigration",
+    "work authorization", "work authorisation", "authorized to work",
+    "authorised to work", "right to work", "clearance", "itar", "export control",
+    "green card", "permanent resident", "nationality", "passport",
+    "date of birth", "legal name",
+)
+
 
 def normalize_question(text: str) -> str:
     """Stable key for a question, robust to punctuation and whitespace churn."""
     t = (text or "").lower().strip()
-    t = re.sub(r"[\*∗]+", "", t)          # required-field asterisks
+    t = re.sub(r"[*\u2217]+", "", t)                    # required-field asterisks
     t = re.sub(r"\(required\)|\(optional\)", "", t)
     t = re.sub(r"[^\w\s?]", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
+    # Stripping punctuation turns "U.S." into "u s", which then matches no
+    # pattern written as "u.s.". Collapse only these specific abbreviations --
+    # a generic single-letter collapse would eat the article in
+    # "are you a u s citizen" and produce "aus".
+    t = re.sub(r"\bu s a\b", "usa", t)
+    t = re.sub(r"\bu s\b", "us", t)
+    t = re.sub(r"\bu k\b", "uk", t)
     return t
 
 
@@ -167,6 +188,16 @@ class AnswerBank:
         if is_legal:
             return self._resolve_legal(question, qid, options)
 
+        # Tripwire: legal-adjacent wording that the taxonomy missed. Halting
+        # here costs one prompt; guessing wrong costs far more.
+        low = normalize_question(question)
+        if any(w in low for w in LEGAL_TRIPWIRES):
+            raise HaltForInput(
+                question,
+                "Immigration/identity question not recognised by the taxonomy — "
+                "refusing to guess or send it to a model",
+            )
+
         stored = self._stored(question)
         if stored:
             return stored
@@ -195,10 +226,38 @@ class AnswerBank:
             )
 
         if qid == "authorized_now":
-            return Resolution(
-                ans.get("authorized_now_us", "Yes"), "profile_legal", 1.0, qid,
-                needs_qualifier=True, qualifier_text=ans.get("authorized_now_us_qualifier", ""),
-            )
+            # "Authorized to work" is always asked about a SPECIFIC country and
+            # the answer differs by country. Resolving all of them with the US
+            # answer would put a false "Yes" on a UK, EU, Canadian or Singapore
+            # application. Detect the country, and refuse to guess.
+            q = normalize_question(question)
+            padded = " " + q + " "
+            countries = [
+                (("united states", "usa", " us ", "america"), "authorized_now_us"),
+                (("united kingdom", " uk ", "britain", "england"), "authorized_now_uk"),
+                (("canada", "canadian"), "authorized_now_canada"),
+                (("singapore",), "authorized_now_singapore"),
+                (("european union", " eu ", "europe", "eea", "schengen", "germany",
+                  "netherlands", "ireland", "switzerland"), "authorized_now_eu"),
+            ]
+            hits = [key for needles, key in countries if any(n in padded for n in needles)]
+            if len(hits) > 1:
+                raise HaltForInput(question, "Names more than one country")
+            if hits:
+                key = hits[0]
+                qual = ans.get(key + "_qualifier", "")
+                if key != "authorized_now_us" and not qual:
+                    qual = ans.get("non_us_qualifier", "")
+                return Resolution(ans.get(key, "No"), "profile_legal", 1.0, qid,
+                                  needs_qualifier=bool(qual), qualifier_text=qual)
+            # No country named. On a US application this nearly always means the
+            # US, and the configured default says so explicitly rather than the
+            # resolver assuming it.
+            if self.s.get("meta.default_work_country", "US") == "US":
+                qual = ans.get("authorized_now_us_qualifier", "")
+                return Resolution(ans.get("authorized_now_us", "Yes"), "profile_legal",
+                                  1.0, qid, needs_qualifier=bool(qual), qualifier_text=qual)
+            raise HaltForInput(question, "Work-authorisation question names no country")
 
         if qid == "citizenship":
             q = normalize_question(question)
