@@ -41,6 +41,7 @@ class Atom:
     tags: list[str] = field(default_factory=list)
     lead_for: list[str] = field(default_factory=list)
     phrasings: dict[str, str] = field(default_factory=dict)
+    pinned: bool = False          # non-negotiable: always appears
 
     def text(self, size: str = "medium") -> str:
         return self.phrasings.get(size) or self.phrasings.get("medium") or ""
@@ -52,6 +53,8 @@ class Selection:
     score: float
     gaps: list[str]                        # JD keywords with no matching atom
     claims_used: dict[str, str]
+    dropped: int = 0                       # atoms that did not fit
+    pinned_dropped: list[str] = field(default_factory=list)
 
 
 class Bank:
@@ -79,6 +82,7 @@ class Bank:
                 group=raw.get("group", raw["id"]), tags=raw.get("tags", []) or [],
                 lead_for=raw.get("lead_for", []) or [],
                 phrasings=raw.get("phrasings", {}) or {},
+                pinned=bool(raw.get("pinned", False)),
             ))
         if cpath.exists():
             self.claims = yaml.safe_load(cpath.read_text(encoding="utf-8")) or {}
@@ -136,9 +140,21 @@ class Bank:
                 stripped = SLOT_RE.sub("", text)
                 for m in BARE_NUMERAL_RE.finditer(stripped):
                     tok = m.group(0).strip()
-                    if tok and not re.fullmatch(r"\d{4}", tok):   # allow bare years
-                        problems.append(
-                            f"{a.id}.{size}: bare numeral {tok!r} — move it into claims.yaml")
+                    if not tok:
+                        continue
+                    # These are not measurements and must stay literal, or the
+                    # ledger fills with noise and the real check gets ignored:
+                    #   years (2026), trivial counts (1-5, as in "3D", "one of 4"),
+                    #   and digits glued to a letter (3D, v5.3, C4).
+                    tail = stripped[m.end():m.end() + 1]
+                    if re.fullmatch(r"(19|20)\d{2}", tok):
+                        continue
+                    if re.fullmatch(r"[1-5]", tok):
+                        continue
+                    if tail.isalpha():
+                        continue
+                    problems.append(
+                        f"{a.id}.{size}: bare numeral {tok!r} — move it into claims.yaml")
                 try:
                     self.resolve(text, strict=True)
                 except BankError as e:
@@ -146,58 +162,112 @@ class Bank:
         return problems
 
     # ------------------------------------------------------------------ #
+    def relevance(self, atom: Atom, jd: str, jd_tokens: set[str], family: str) -> float:
+        hits = sum(1 for t in atom.tags if t.replace("_", " ") in jd or t in jd_tokens)
+        rel = hits / max(2.0, len(atom.tags) or 1)
+        if family in atom.lead_for:
+            rel += 0.75
+        if atom.section == "experience":
+            rel += 0.15
+        return rel
+
+    def _best_size(self, atom: Atom, rel: float) -> str:
+        # A pinned atom was pinned because it matters, so it starts at its
+        # fullest form and is only shortened if the page genuinely demands it.
+        # Sizing pins by job relevance is backwards: the whole point of a pin is
+        # that it appears even when the job does not obviously ask for it.
+        if atom.pinned:
+            size = "long"
+        else:
+            size = "long" if rel > 0.8 else ("medium" if rel > 0.35 else "short")
+        while size and not self.renderable(atom, size):
+            size = {"long": "medium", "medium": "short", "short": ""}[size]
+        return size
+
+    def _cost(self, atom: Atom, size: str, seen_groups: set[str]) -> int:
+        cost = 1 + (len(atom.text(size)) // 105)
+        if atom.group not in seen_groups:
+            cost += 2          # the role heading this bullet renders under
+        return cost
+
     def select(self, jd_text: str, *, family: str = "default",
-               line_budget: int = 44) -> Selection:
-        """Greedy knapsack: highest relevance per line, inside section limits."""
+               line_budget: int = 38, max_per_group: int = 4) -> Selection:
+        """Fit the best subset of a large bank onto one page.
+
+        Two phases, because "always include this" and "include what fits" are
+        different requirements and mixing them loses the first one:
+
+        1. **Pinned atoms.** Non-negotiables claim their space before anything
+           competes for it. If they cannot all fit, the overflow is reported by
+           name rather than silently dropped -- that is a signal the pin set is
+           too big for one page, and only you can decide what gives.
+        2. **Everything else**, greedily by relevance per line consumed.
+
+        `max_per_group` stops one role with twelve bullets from eating the page.
+        """
         jd = (jd_text or "").lower()
         jd_tokens = set(re.findall(r"[a-z][a-z0-9+#.]{1,}", jd))
 
-        scored: list[tuple[float, Atom]] = []
-        for a in self.atoms:
-            hits = sum(1 for t in a.tags if t.replace("_", " ") in jd or t in jd_tokens)
-            rel = hits / max(2.0, len(a.tags) or 1)
-            if family in a.lead_for:
-                rel += 0.75                      # lead atoms float to the top
-            if a.section == "experience":
-                rel += 0.15                      # real work outranks side projects
-            scored.append((rel, a))
+        scored = [(self.relevance(a, jd, jd_tokens, family), a) for a in self.atoms]
         scored.sort(key=lambda p: -p[0])
 
-        per_section: dict[str, int] = {}
         chosen: list[tuple[Atom, str]] = []
         seen_groups: set[str] = set()
-        used_lines = 0
+        per_section: dict[str, int] = {}
+        per_group: dict[str, int] = {}
         claims_used: dict[str, str] = {}
+        used = 0
+        pinned_dropped: list[str] = []
 
-        for rel, a in scored:
-            limits = self.sections.get(a.section, {})
-            cap = int(limits.get("max_atoms", 6))
-            if per_section.get(a.section, 0) >= cap:
-                continue
-            size = "long" if rel > 0.8 else ("medium" if rel > 0.35 else "short")
-            while size and not self.renderable(a, size):
-                size = {"long": "medium", "medium": "short", "short": ""}[size]
+        def try_add(atom: Atom, rel: float, *, force: bool) -> bool:
+            nonlocal used
+            limits = self.sections.get(atom.section, {})
+            if not force:
+                if per_section.get(atom.section, 0) >= int(limits.get("max_atoms", 6)):
+                    return False
+                if per_group.get(atom.group, 0) >= max_per_group:
+                    return False
+            size = self._best_size(atom, rel)
             if not size:
-                continue                          # every phrasing blocked by a retired claim
-            # A bullet costs its wrapped line count; the FIRST atom of a group
-            # also pays for the role heading it renders under (title + org line).
-            cost = 1 + (len(a.text(size)) // 105)
-            if a.group not in seen_groups:
-                cost += 2
-            if used_lines + cost > line_budget:
-                continue
-            text, used = self.resolve(a.text(size))
-            claims_used.update(used)
-            chosen.append((a, size))
-            seen_groups.add(a.group)
-            per_section[a.section] = per_section.get(a.section, 0) + 1
-            used_lines += cost
+                return False
+            cost = self._cost(atom, size, seen_groups)
+            if used + cost > line_budget:
+                # Try the shortest renderable phrasing before giving up.
+                for fallback in ("short", "medium"):
+                    if self.renderable(atom, fallback):
+                        c2 = self._cost(atom, fallback, seen_groups)
+                        if used + c2 <= line_budget:
+                            size, cost = fallback, c2
+                            break
+                else:
+                    return False
+                if used + cost > line_budget:
+                    return False
+            _, used_claims = self.resolve(atom.text(size), strict=False)
+            claims_used.update(used_claims)
+            chosen.append((atom, size))
+            seen_groups.add(atom.group)
+            per_section[atom.section] = per_section.get(atom.section, 0) + 1
+            per_group[atom.group] = per_group.get(atom.group, 0) + 1
+            used += cost
+            return True
 
-        # honesty: JD terms with no backing atom go to the gap report, never
-        # into the document.
+        # phase 1 -- non-negotiables
+        for rel, a in [(r, a) for r, a in scored if a.pinned]:
+            if not try_add(a, rel, force=True):
+                pinned_dropped.append(a.id)
+
+        # phase 2 -- best of the rest
+        for rel, a in scored:
+            if a.pinned:
+                continue
+            try_add(a, rel, force=False)
+
         gaps = self._gaps(jd_tokens)
-        fill = sum(1 for _ in chosen) / max(1, len(self.atoms))
-        return Selection(chosen, round(fill, 3), gaps, claims_used)
+        coverage = len(chosen) / max(1, len(self.atoms))
+        return Selection(chosen, round(coverage, 3), gaps, claims_used,
+                         dropped=len(self.atoms) - len(chosen),
+                         pinned_dropped=pinned_dropped)
 
     def _gaps(self, jd_tokens: set[str]) -> list[str]:
         have = {t for a in self.atoms for t in a.tags}
