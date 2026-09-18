@@ -16,6 +16,10 @@ Everything runs through one entry point:
     applier outreach harvest --github-org <org> | --repo o/r | --team-page <url> | --csv <f>
     applier outreach draft   write messages for harvested contacts (never sends)
     applier outreach list    show contacts and their stage
+
+    applier bank import      rebuild the content bank from master_resume.md
+    applier bank lint        check every phrasing is renderable and traceable
+    applier bank preview     what a given job description would select
 """
 
 from __future__ import annotations
@@ -40,6 +44,8 @@ config_app = typer.Typer(help="Configuration and secrets.")
 app.add_typer(config_app, name="config")
 reach_app = typer.Typer(help="Referrals and networking. Drafts only -- never sends.")
 app.add_typer(reach_app, name="outreach")
+bank_app = typer.Typer(help="The master resume and content bank.")
+app.add_typer(bank_app, name="bank")
 con = Console()
 
 
@@ -511,6 +517,152 @@ def outreach_list() -> None:
                   r["email"] or "-", r["stage"] or "",
                   "[green]yes[/green]" if r["hook_source_url"] else "[red]none[/red]")
     con.print(t)
+
+
+# --------------------------------------------------------------------------- #
+# content bank
+# --------------------------------------------------------------------------- #
+@bank_app.command("import")
+def bank_import(
+    master: Path = typer.Option(None, help="Path to master_resume.md."),
+) -> None:
+    """Rebuild the content bank from your master resume.
+
+    Add to master_resume.md whenever you like, then run this. Numbers are
+    extracted into the claims ledger; anything you retired stays retired.
+    """
+    settings, _ = _load()
+    bank_dir = Path(settings.get("tailor.bank_path", "config/bank"))
+    master = master or bank_dir / "master_resume.md"
+
+    from .tailor.master import MasterError, build_bank
+    try:
+        r = build_bank(master, bank_dir)
+    except MasterError as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    con.print(f"[green]imported[/green] {r['entries']} entries -> {r['atoms']} atoms "
+              f"({r['pinned']} pinned), {r['skill_groups']} skill groups")
+    if r["new_claims"]:
+        con.print(f"[yellow]{r['new_claims']} new number(s)[/yellow] added to claims.yaml "
+                  f"as [bold]needs_check[/bold].")
+    if r["retired_dropped"]:
+        con.print(f"[dim]{r['retired_dropped']} retired claim(s) left retired — "
+                  f"withdrawn metrics are never resurrected by an import.[/dim]")
+    if r["needs_check"]:
+        con.print(f"\n[bold]{len(r['needs_check'])} number(s) awaiting your confirmation.[/bold]")
+        con.print("[dim]Open config/bank/claims.yaml. For each, ask: could I reconstruct this\n"
+                  "out loud, in sixty seconds, under questioning? If yes set status: verified.\n"
+                  "If no, set status: RETIRED and it can never appear on a resume again.[/dim]")
+        for k in r["needs_check"][:15]:
+            con.print(f"   {k}")
+
+    from .tailor.bank import Bank
+    problems = Bank(bank_dir).lint()
+    con.print(f"\nlint: [{'green' if not problems else 'red'}]{len(problems)} problem(s)"
+              f"[/{'green' if not problems else 'red'}]")
+    for p in problems[:8]:
+        con.print(f"   - {p}")
+
+
+@bank_app.command("lint")
+def bank_lint() -> None:
+    """Check every phrasing renders and every number traces to a claim."""
+    settings, _ = _load()
+    from .tailor.bank import Bank
+    b = Bank(Path(settings.get("tailor.bank_path", "config/bank")))
+    problems = b.lint()
+
+    retired, unchecked = [], []
+    for sect, claims in (b.claims or {}).items():
+        if not isinstance(claims, dict):
+            continue
+        for name, cl in claims.items():
+            if not isinstance(cl, dict):
+                continue
+            if cl.get("status") == "RETIRED":
+                retired.append(f"{sect}.{name}")
+            elif cl.get("status") == "needs_check":
+                unchecked.append(f"{sect}.{name}")
+
+    con.print(f"atoms: {len(b.atoms)}  roles: {len(b.roles)}  "
+              f"pinned: {sum(1 for a in b.atoms if a.pinned)}")
+    con.print(f"claims: verified/needs_check/retired = "
+              f"{sum(1 for s,c in b.claims.items() if isinstance(c,dict) for x in c.values() if isinstance(x,dict) and x.get('status')=='verified')}"
+              f"/{len(unchecked)}/{len(retired)}")
+    if problems:
+        con.print(f"\n[red]{len(problems)} problem(s):[/red]")
+        for p in problems:
+            con.print(f"   - {p}")
+    else:
+        con.print("\n[green]bank is clean — every phrasing renders and every number traces.[/green]")
+    if unchecked:
+        con.print(f"\n[yellow]{len(unchecked)} number(s) still needs_check:[/yellow] "
+                  + ", ".join(unchecked[:10]))
+
+
+@bank_app.command("preview")
+def bank_preview(
+    url: str = typer.Argument(None, help="A job URL, or omit and use --text."),
+    text: str = typer.Option(None, "--text", help="Paste a job description instead."),
+    render: bool = typer.Option(False, "--render", help="Also produce the PDF."),
+) -> None:
+    """Show exactly what a given job would select, before applying."""
+    settings, profile = _load()
+    from .tailor.bank import Bank, job_family
+
+    jd, title, company = text or "", "preview", "preview"
+    if url and not text:
+        from .discover import sources as S
+        raw = S.fetch_single(url)
+        if raw is None:
+            con.print(f"[red]could not fetch {url}[/red]")
+            raise typer.Exit(1)
+        jd, title, company = raw.description, raw.title, raw.company
+    if not jd:
+        con.print("[yellow]give a URL or --text[/yellow]")
+        raise typer.Exit(1)
+
+    bank_dir = Path(settings.get("tailor.bank_path", "config/bank"))
+    b = Bank(bank_dir)
+    fam = job_family({"title": title, "description": jd})
+    sel = b.select(jd, family=fam, line_budget=38)
+
+    con.print(f"[bold]{company}[/bold] — {title}")
+    con.print(f"job family: [cyan]{fam}[/cyan]   "
+              f"selected {len(sel.atoms)}/{len(b.atoms)} atoms\n")
+
+    by_section: dict = {}
+    for atom, size in sel.atoms:
+        by_section.setdefault(atom.section, []).append((atom, size))
+    for section in ("education", "experience", "projects", "leadership"):
+        rows = by_section.get(section)
+        if not rows:
+            continue
+        con.print(f"[bold]{section.upper()}[/bold]")
+        for atom, size in rows:
+            pin = "[green]PIN[/green] " if atom.pinned else "    "
+            body, _ = b.resolve(atom.text(size), strict=False)
+            con.print(f"  {pin}[dim]{size:6}[/dim] {body[:104]}")
+        con.print("")
+
+    if sel.pinned_dropped:
+        con.print(f"[red]pins that did not fit:[/red] {', '.join(sel.pinned_dropped)}")
+        con.print("[dim]Your non-negotiables exceed one page. Unpin something.[/dim]")
+    if sel.gaps:
+        con.print(f"[yellow]gaps[/yellow] — this job asks for, and your bank cannot back: "
+                  f"{', '.join(sel.gaps)}")
+        con.print("[dim]Deliberately left off the resume. This is the input to what to learn next.[/dim]")
+
+    if render:
+        from .tailor.pipeline import build_resume
+        art = Path("out/preview")
+        art.mkdir(parents=True, exist_ok=True)
+        pdf, rep, _ = build_resume(
+            {"company": company, "title": title, "description": jd, "url": url or ""},
+            settings, profile, art)
+        con.print(f"\n[green]{rep}[/green] -> {pdf}")
 
 # --------------------------------------------------------------------------- #
 @config_app.command("set-key")
