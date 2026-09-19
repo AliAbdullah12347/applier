@@ -78,8 +78,12 @@ UNITS = (r"FPS|fps|days?|hours?|minutes?|mins?|seconds?|secs?|weeks?|months?|yea
          r"|students?|attendees?|tickets?|members?|languages?|applicants?|courses?"
          r"|commits?|contributors?|venues?|events?|organizations?|organisations?")
 NUMERAL_RE = re.compile(
-    r"(?<![\w.$])(~?\$?\d[\d,]*(?:\.\d+)?(?:\s*(?:%|x\b|\+|!))?"
-    r"(?:\s+(?:" + UNITS + r"))?)")
+    r"(?<![\w.$])("
+    r"~?\$?\d[\d,]*(?:\.\d+)?"          # the number
+    r"(?:\s*[-\u2013]\s*\d[\d,]*(?:\.\d+)?)?"   # optional range: 70-200
+    r"(?:\s*(?:%|x\b|\+|!))?"             # optional suffix: % x + !
+    r"(?:\s+(?:" + UNITS + r"))?"         # optional unit word
+    r")")
 
 
 class MasterError(RuntimeError):
@@ -178,6 +182,40 @@ def parse(path: Path) -> tuple[list[MasterEntry], dict[str, list[str]]]:
 
 
 # --------------------------------------------------------------------------- #
+
+def _shape(value: str) -> str:
+    """The identity of a number: its digits AND its unit.
+
+    Two bugs came from getting this wrong, and both silently bound unrelated
+    facts to a single claim, so editing one would change the other:
+
+      digits only      "70" from "70-200 attendees" bound to an unrelated "70%"
+      digits + suffix  "30 students" bound to "30 FPS"
+
+    A number means nothing without its unit, so the unit is part of the key.
+    Everything else -- spaces, commas, tildes, currency -- is noise.
+    """
+    v = value.strip().lower()
+    v = re.sub(r"[\s,~$]", "", v)
+    return re.sub(r"[^0-9a-z%+!.-]", "", v)
+
+
+
+def _claim_name(value: str) -> str:
+    """A stable claim name derived from the value itself.
+
+    Sequential names (n1, n2, ...) were a latent bug: the counter reset for each
+    bullet, so two bullets in the same entry both minted "n1" and the second
+    silently overwrote the first -- binding one bullet's prose to another
+    bullet's number. A value-derived name cannot collide unless the values are
+    genuinely identical, in which case sharing a claim is correct.
+    """
+    v = value.strip().lower()
+    v = v.replace("%", "pct").replace("+", "plus").replace("$", "usd")
+    v = re.sub(r"[^a-z0-9]+", "_", v).strip("_")
+    return ("n_" + v)[:40] or "n_value"
+
+
 def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
     """Replace inline numerals with claim slots, minting claims as needed.
 
@@ -196,7 +234,7 @@ def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
                 val = str(claim["value"]).strip()
                 key = f"{section}.{name}"
                 value_to_key.setdefault(val, key)
-                digits_to_keys.setdefault(re.sub(r"[^\d]", "", val), set()).add(key)
+                digits_to_keys.setdefault(_shape(val), set()).add(key)
 
     def lookup(tok: str) -> str | None:
         """Exact match first; then digits-only, but only when unambiguous.
@@ -209,17 +247,22 @@ def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
         """
         if tok in value_to_key:
             return value_to_key[tok]
-        d = re.sub(r"[^\d]", "", tok)
+        d = _shape(tok)
         if not d:
             return None
         cands = digits_to_keys.get(d, set())
         return next(iter(cands)) if len(cands) == 1 else None
 
-    counter = [0]
 
     def repl(m: re.Match) -> str:
         tok = m.group(1).strip()
         if NUMERAL_SKIP.match(tok.replace(",", "")):
+            return tok
+        # A version number is part of a product's name, not a measurement.
+        # "Unreal Engine 5.3" and "Next.js 15" should stay literal rather than
+        # filling the ledger with figures nobody could "defend".
+        before = text[max(0, m.start() - 24):m.start()].rstrip()
+        if re.fullmatch(r"\d+\.\d+", tok) and re.search(r"[A-Za-z][A-Za-z.]*\s*$", before):
             return tok
         key = lookup(tok)
         if key:
@@ -230,15 +273,14 @@ def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
                 # rather than reintroducing it.
                 return ""
             return "{{C." + key + "}}"
-        counter[0] += 1
-        name = f"n{counter[0]}"
+        name = _claim_name(tok)
         minted.setdefault(prefix, {})[name] = {
             "value": tok,
             "evidence": "IMPORTED from master_resume.md -- confirm you can defend this.",
             "status": "needs_check",
         }
         value_to_key[tok] = f"{prefix}.{name}"
-        digits_to_keys.setdefault(re.sub(r"[^\d]", "", tok), set()).add(f"{prefix}.{name}")
+        digits_to_keys.setdefault(_shape(tok), set()).add(f"{prefix}.{name}")
         return "{{C." + f"{prefix}.{name}" + "}}"
 
     return NUMERAL_RE.sub(repl, text), minted
@@ -291,16 +333,28 @@ def build_bank(master_path: Path, bank_dir: Path, *, write: bool = True) -> dict
             roles[prefix]["pinned"] = True
 
         for i, b in enumerate(e.bullets, 1):
-            long_text, minted = extract_numbers(b["text"], prefix, existing_claims)
+            # Thread the claims minted by each phrasing forward into the next.
+            # Without this, a variant that mentions a number the long form
+            # phrases differently mints its own claim, the caller discards it,
+            # and the variant is left pointing at a slot that does not exist --
+            # which the lint gate then refuses to render.
+            ledger = yaml.safe_load(yaml.safe_dump(existing_claims)) if existing_claims else {}
+            _merge(ledger, new_claims)
+
+            long_text, minted = extract_numbers(b["text"], prefix, ledger)
             _merge(new_claims, minted)
+            _merge(ledger, minted)
 
             phrasings = {"long": long_text}
             variants = list(b["variants"])
             if variants:
-                med, _ = extract_numbers(variants[0], prefix, existing_claims)
+                med, m2 = extract_numbers(variants[0], prefix, ledger)
+                _merge(new_claims, m2)
+                _merge(ledger, m2)
                 phrasings["medium"] = med
             if len(variants) > 1:
-                sh, _ = extract_numbers(variants[1], prefix, existing_claims)
+                sh, m3 = extract_numbers(variants[1], prefix, ledger)
+                _merge(new_claims, m3)
                 phrasings["short"] = sh
             if "medium" not in phrasings:
                 phrasings["medium"] = long_text
