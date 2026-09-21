@@ -214,6 +214,18 @@ def load_settings(path: Path | None = None, *, reload: bool = False) -> Config:
         return _settings_cache
     p = path or CONFIG_DIR / "settings.yaml"
     data = _read_yaml(p)
+
+    # A machine-written overlay sits on top of the hand-written base, so that
+    # saving a toggle in the GUI cannot strip the comments that explain every
+    # other knob in settings.yaml. Precedence, lowest to highest:
+    #   settings.yaml  ->  settings.local.yaml  ->  APPLIER__* environment
+    # The overlay is gitignored: it is where a published checkout accumulates
+    # one particular person's choices.
+    if path is None:
+        local = CONFIG_DIR / "settings.local.yaml"
+        if local.exists():
+            data = _deep_merge(data, _read_yaml(local))
+
     _apply_env_overrides(data)
     _settings_cache = Config(data, source=str(p))
     return _settings_cache
@@ -242,6 +254,54 @@ def save_profile(cfg: Config, path: Path | None = None) -> None:
     with tmp.open("w", encoding="utf-8", newline="") as fh:
         yaml.safe_dump(cfg.raw, fh, sort_keys=False, allow_unicode=True, width=100)
     tmp.replace(p)
+
+
+def save_settings(cfg: Config, path: Path | None = None) -> None:
+    """Persist settings.yaml.
+
+    Written atomically via a temp file and a rename, like the profile. The GUI
+    saves on every toggle, so a crash or a power cut lands mid-write far more
+    often than it would with hand-editing; a half-written settings.yaml would
+    take the whole system down on next start.
+
+    Comments in the file are lost on save — PyYAML round-trips values, not
+    trivia. settings.yaml is heavily commented on purpose, so the GUI writes
+    only the keys a user actually changed, through `patch_settings`, and leaves
+    the file alone otherwise.
+    """
+    p = path or CONFIG_DIR / "settings.yaml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".yaml.tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as fh:
+        yaml.safe_dump(cfg.raw, fh, sort_keys=False, allow_unicode=True, width=100)
+    tmp.replace(p)
+    global _settings_cache
+    _settings_cache = cfg
+
+
+def settings_overlay_path() -> Path:
+    """Where GUI-changed settings live.
+
+    Keeping them in a separate overlay preserves the comments in settings.yaml,
+    which are the only documentation for half of these knobs. The overlay is
+    small, machine-written, and deep-merged over the base at load time.
+    """
+    return CONFIG_DIR / "settings.local.yaml"
+
+
+def patch_settings(updates: dict[str, Any]) -> Config:
+    """Apply dotted-key updates to the overlay and return the merged settings."""
+    p = settings_overlay_path()
+    overlay = _read_yaml(p) if p.exists() else {}
+    scratch = Config(overlay, source=str(p))
+    for dotted, value in updates.items():
+        scratch.set(dotted, value)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".yaml.tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as fh:
+        yaml.safe_dump(scratch.raw, fh, sort_keys=False, allow_unicode=True, width=100)
+    tmp.replace(p)
+    return load_settings(reload=True)
 
 
 def unanswered(cfg: Config) -> list[str]:

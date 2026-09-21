@@ -2,6 +2,7 @@
 
 Everything runs through one entry point:
 
+    applier gui              open the app; everything below, with a screen
     applier setup            one-time wizard; asks for anything missing
     applier doctor           check keys, deps, disk, config -- run this first
     applier discover         pull new postings from all enabled sources
@@ -183,6 +184,27 @@ def setup() -> None:
 
 
 # --------------------------------------------------------------------------- #
+@app.command()
+def gui(
+    port: int = typer.Option(8765, help="Port on localhost. Takes the next free one if busy."),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Do not open a browser."),
+    verbose: bool = typer.Option(False, "--verbose", help="Log every HTTP request."),
+) -> None:
+    """Open the app. Everything the CLI does, with a screen in front of it.
+
+    Serves on 127.0.0.1 only, behind a token minted fresh each launch. It is
+    not reachable from another machine and there is no flag to make it so:
+    the pages here show a date of birth, a home address and an immigration
+    status, and the only authentication is that token.
+    """
+    from .web import serve
+    try:
+        serve(port=port, open_browser=not no_browser, verbose=verbose)
+    except OSError as e:
+        con.print(f"[red]Could not start the server:[/red] {e}")
+        raise typer.Exit(1)
+
+
 @app.command()
 def doctor() -> None:
     """Check everything before a real run."""

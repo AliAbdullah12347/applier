@@ -61,3 +61,6 @@ Thumbs.db
 research/
 _git_migration_backup/
 tool-results/
+
+# GUI-written settings overlay: one person's choices, not the shipped defaults
+config/settings.local.yaml
