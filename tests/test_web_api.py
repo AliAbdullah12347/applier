@@ -98,6 +98,23 @@ def test_a_hand_edited_settings_file_is_inferred_not_overwritten(mode, expected)
     assert autonomy.current(cfg) == expected
 
 
+@pytest.mark.parametrize("threshold", [0.55, 0.60, 0.70, 0.75, 0.90])
+def test_ambiguous_config_never_infers_full_autonomy(threshold):
+    """`mode: auto` with no explicit level is ambiguous, and the two readings
+    differ on whether this software submits unattended. It must resolve to the
+    quieter one — an under-claim costs a click, an over-claim costs an
+    application the person never agreed to send."""
+    cfg = Config({"apply": {"mode": "auto"},
+                  "search": {"min_score_to_autoapply": threshold}}, "test")
+    assert autonomy.current(cfg) == autonomy.ASSISTED
+
+
+def test_full_autonomy_requires_an_explicit_choice():
+    cfg = Config({"apply": {"mode": "auto"},
+                  "autonomy": {"level": "autonomous"}}, "test")
+    assert autonomy.current(cfg) == autonomy.AUTONOMOUS
+
+
 # --------------------------------------------------------------------------- #
 # write allow-lists
 # --------------------------------------------------------------------------- #

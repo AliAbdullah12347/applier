@@ -30,6 +30,23 @@ def _console(c=None):
     return Console()
 
 
+def _rel_artifact(path) -> str:
+    """A path relative to the artifacts root, forward-slashed.
+
+    Artifact paths are stored relative and never absolute. Two reasons: the
+    GUI resolves what it is handed against the artifacts root and refuses
+    anything that escapes it, so an absolute path is simply unservable; and an
+    absolute path bakes one machine's layout — and one person's Windows
+    username — into rows that outlive the machine.
+    """
+    p = Path(path)
+    root = project_paths()["artifacts"].resolve()
+    try:
+        return p.resolve().relative_to(root).as_posix()
+    except ValueError:
+        return p.as_posix()
+
+
 # --------------------------------------------------------------------------- #
 # discover
 # --------------------------------------------------------------------------- #
@@ -294,6 +311,10 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         max_pages = int(settings.get("apply.universal_filler.max_pages_per_application", 12))
         submitted = False
         all_filled: dict[str, Any] = {}
+        # The selector->value map above is what the browser needed. This is the
+        # record a human can audit: question, answer, and where the answer came
+        # from. integrity.log_every_submitted_answer means this one, not that one.
+        audit_trail: list[dict[str, Any]] = []
         shots: list[str] = []
 
         for step in range(max_pages):
@@ -316,6 +337,7 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                         f"  screenshot: {shot}")
 
             all_filled.update(res.filled)
+            audit_trail.extend(res.audit)
             if res.mismatches:
                 con.print(f"[yellow]{len(res.mismatches)} field(s) did not take[/yellow]")
 
@@ -331,7 +353,7 @@ def _execute_application(job: dict, settings: Config, profile: Config,
 
             shot = sess.screenshot(artifact / f"step-{step}.png")
             if shot:
-                shots.append(str(shot))
+                shots.append(_rel_artifact(shot))
 
             selector, is_submit = filler.find_advance(page)
             if not selector and adapter.advance_selectors:
@@ -349,8 +371,9 @@ def _execute_application(job: dict, settings: Config, profile: Config,
             if is_submit:
                 if mode == "review":
                     db.run("UPDATE applications SET status='ready', artifact_dir=?, "
-                           "answers_json=? WHERE job_id=?",
-                           (str(artifact), json.dumps(all_filled), job_id))
+                           "answers_json=?, screenshots=? WHERE job_id=?",
+                           (_rel_artifact(artifact), json.dumps(audit_trail),
+                            json.dumps(shots), job_id))
                     return ("Form is filled and ready. Review the open browser and click "
                             "submit yourself.")
                 sess.click(selector)
@@ -362,14 +385,14 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         sess.settle(1500)
         final_shot = sess.screenshot(artifact / "final.png")
         if final_shot:
-            shots.append(str(final_shot))
+            shots.append(_rel_artifact(final_shot))
 
         status = "submitted" if submitted else "ready"
         db.run(
             "UPDATE applications SET status=?, submitted_at=?, artifact_dir=?, "
             "answers_json=?, screenshots=?, resume_path=? WHERE job_id=?",
-            (status, now() if submitted else None, str(artifact),
-             json.dumps(all_filled), json.dumps(shots),
+            (status, now() if submitted else None, _rel_artifact(artifact),
+             json.dumps(audit_trail), json.dumps(shots),
              str(resume_path) if resume_path else None, job_id),
         )
         if submitted:

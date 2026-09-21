@@ -102,7 +102,13 @@ applier setup      # one-time wizard: asks for everything missing, once
 applier doctor     # verifies keys, deps, disk, pdflatex
 ```
 
-Then either:
+Then open the app:
+
+```bash
+applier gui
+```
+
+or drive it from the terminal:
 
 ```bash
 applier apply https://job.example.com/postings/123   # one link, start to finish
@@ -111,6 +117,58 @@ applier run                                          # autonomous: find and appl
 
 Requires Python 3.11+, a TeX distribution providing `pdflatex`, and an API key
 for any one supported LLM provider.
+
+---
+
+## The app
+
+`applier gui` serves a local web UI and prints a link to open. Everything the
+CLI can do is in it, and neither side is the poor relation — a test fails if a
+capability lands on one and not the other.
+
+| Screen | What it is for |
+|---|---|
+| **Dashboard** | The funnel, and whatever is currently blocking progress, listed before the statistics. One system check that makes a real model call. |
+| **Jobs** | The queue, sorted by score. Each row explains itself: the gate verdict and its reason, or a warning that the posting was too thin to gate at all. |
+| **Apply** | Paste a link, choose how much autonomy to grant this run, watch the log live. Below it, the unattended runner with a stop button. |
+| **Applications** | What an employer actually received: the resume hash, every field submitted with its provenance, a screenshot of each step. |
+| **Questions** | Anything it could not resolve. Answer once; it is never asked again. Plus the bank of everything already learned. |
+| **Resume** | The master markdown file, and a preview of what a given posting would select from it — including which of its keywords nothing in your bank covers. |
+| **Outreach** | Contacts and drafted messages. Nothing is ever sent; there is no send path in the codebase. |
+| **Settings** | Autonomy, keys, limits, profile, and a privacy audit you can run from the page. |
+
+### Autonomy
+
+One dial, four positions, shown on the dashboard and in Settings:
+
+| Level | What it does |
+|---|---|
+| **Fully involved** | Finds, scores, tailors, writes the letter. Opens nothing, sends nothing. |
+| **Review each one** | Fills every field and stops with the browser on screen. You press submit. |
+| **Assisted** | Submits strong matches; anything weaker waits for your approval. |
+| **Fully autonomous** | Submits everything that clears the gates. |
+
+What the dial does *not* change, at any setting: eligibility gates still run, a
+legal or work-authorisation question that cannot be resolved exactly still halts
+that application rather than being guessed at, a visible CAPTCHA still pauses,
+and the per-employer caps hold.
+
+### Why it is safe to run a server on your own machine
+
+A page on any website you have open can send requests to `127.0.0.1`, and with a
+DNS rebind it can read the replies — which here would mean a date of birth, a
+home address and an immigration status. So the GUI:
+
+- binds loopback only, and refuses to start on any other address;
+- requires a token minted per launch, delivered in the URL **fragment** so it
+  never reaches a server log, and held in `sessionStorage`, never on disk;
+- allow-lists the `Host` header, which is what actually stops a rebind;
+- sends no CORS headers at all, so every cross-origin preflight fails closed;
+- ships a CSP with no remote origins and no `unsafe-inline` — the UI loads no
+  CDN, no web font, and no third-party script;
+- never returns a stored secret from any endpoint.
+
+`tests/test_web_security.py` covers each of these and names the attack it stops.
 
 ---
 
