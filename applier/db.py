@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -200,43 +201,75 @@ def now() -> str:
 
 
 class Database:
+    """One database, one connection per thread.
+
+    A sqlite3.Connection may only be used by the thread that opened it. That
+    was invisible while everything ran on one thread, and became a hard error
+    the moment the GUI started running discover/apply/the autonomous loop on
+    worker threads: every background task died on its first query.
+
+    So the connection lives in thread-local storage and is opened on first use
+    by each thread. WAL mode makes this safe to do — concurrent readers do not
+    block a writer, and `timeout` lets a writer wait rather than fail.
+
+    The schema is created once, by whichever thread gets there first; the
+    statements are all IF NOT EXISTS, so a race is harmless.
+    """
+
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(SCHEMA)
-        self._conn.execute(
-            "INSERT INTO meta(key,value) VALUES('schema_version',?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (str(SCHEMA_VERSION),),
-        )
+        self._local = threading.local()
+        self._init_lock = threading.Lock()
+        self._ready = False
+        self._connect()          # fail fast here, not on first query
 
     # ------------------------------------------------------------------ #
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        # Applies per connection, not per database: a new thread's connection
+        # would otherwise default back to legacy rollback-journal behaviour.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=30000")
+        with self._init_lock:
+            if not self._ready:
+                conn.executescript(SCHEMA)
+                conn.execute(
+                    "INSERT INTO meta(key,value) VALUES('schema_version',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (str(SCHEMA_VERSION),),
+                )
+                self._ready = True
+        self._local.conn = conn
+        return conn
+
     @property
     def conn(self) -> sqlite3.Connection:
-        return self._conn
+        conn = getattr(self._local, "conn", None)
+        return conn if conn is not None else self._connect()
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
-        self._conn.execute("BEGIN")
+        c = self.conn
+        c.execute("BEGIN IMMEDIATE")
         try:
-            yield self._conn
+            yield c
         except Exception:
-            self._conn.execute("ROLLBACK")
+            c.execute("ROLLBACK")
             raise
         else:
-            self._conn.execute("COMMIT")
+            c.execute("COMMIT")
 
     def q(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
-        return list(self._conn.execute(sql, params))
+        return list(self.conn.execute(sql, params))
 
     def one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
-        cur = self._conn.execute(sql, params)
-        return cur.fetchone()
+        return self.conn.execute(sql, params).fetchone()
 
     def run(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
-        return self._conn.execute(sql, params)
+        return self.conn.execute(sql, params)
 
     # ------------------------------------------------------------------ #
     def log(
@@ -273,10 +306,14 @@ class Database:
         return int(cur.lastrowid)
 
     def close(self) -> None:
-        try:
-            self._conn.close()
-        except Exception:
-            pass
+        """Close this thread's connection. Other threads keep their own."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
 
 
 _db: Database | None = None

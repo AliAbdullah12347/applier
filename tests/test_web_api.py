@@ -146,6 +146,61 @@ def test_profile_writes_reject_structured_values():
         api.put_profile({"updates": {"identity.full_name": {"$ne": None}}})
 
 
+def test_redaction_never_masks_a_writable_setting():
+    """A masked value that a form can save back is config corruption.
+
+    `api_key_env` holds the NAME of an environment variable, not a key — but
+    it contains "api_key", so a substring-matching redactor masked it to
+    "GEM***". The settings screen reads that into a field; saving the form
+    unchanged would write "GEM***" as the variable to look the key up under,
+    and the next run would find no key at all.
+    """
+    from applier.config import redact
+    sample = {
+        "llm": {"primary": {
+            "api_key_env": "GEMINI_API_KEY",     # a name — must survive
+            "api_key": "secret-value-here",      # a value — must be masked
+            "model": "gemini-3.5-flash",
+        }},
+    }
+    out = redact(sample)["llm"]["primary"]
+    assert out["api_key_env"] == "GEMINI_API_KEY"
+    assert out["api_key"].endswith("***")
+    assert "secret-value-here" not in str(out)
+
+
+def test_no_writable_key_is_masked_by_redact():
+    """The general form of the above, checked against the real allow-list."""
+    from applier.config import redact
+    for dotted in api.WRITABLE:
+        leaf = dotted.split(".")[-1]
+        probe = redact({leaf: "a-real-value-typed-by-a-person"})[leaf]
+        assert probe == "a-real-value-typed-by-a-person", (
+            f"{dotted} is writable but redact() masks it — the settings form "
+            f"would save the mask back over the real value")
+
+
+def test_a_redacted_placeholder_is_refused_on_write():
+    with pytest.raises(api.ApiError, match="redacted"):
+        api.put_settings({"updates": {"llm.primary.api_key_env": "GEM***"}})
+
+
+@pytest.mark.parametrize("key,secret", [
+    ("api_key", True), ("password", True), ("token", True),
+    ("client_secret", True), ("refresh_token", True), ("github_token", True),
+    ("secret_key", True),
+    # The near-misses that a substring match gets wrong:
+    ("api_key_env", False),        # the NAME of an env var
+    ("max_output_tokens", False),  # a size, not a credential
+    ("thinking_budget", False),
+    ("token_path", False),         # where a token lives, not the token
+    ("password_field_name", False),
+])
+def test_secret_key_detection_matches_on_word_boundaries(key, secret):
+    from applier.config import is_secret_key
+    assert is_secret_key(key) is secret, f"{key!r} classified wrongly"
+
+
 def test_no_secret_bearing_key_is_writable_or_readable():
     """Keys are set through the keychain endpoint, never through config."""
     for key in api.WRITABLE:
