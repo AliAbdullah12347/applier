@@ -17,6 +17,7 @@ import json
 import mimetypes
 import re
 import socket
+import sys
 import threading
 import traceback
 import webbrowser
@@ -42,6 +43,20 @@ STATIC_TYPES = {
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
 }
+
+# Disconnects that are normal traffic, not faults. A browser aborts a
+# keep-alive socket whenever it navigates away, reloads, or gives up on an idle
+# connection, and it closes the SSE stream every time the log drawer shuts.
+# socketserver's default reaction is to dump a full traceback to the console —
+# which, on a window the user is told to leave open, reads like a crash and
+# buries the one line that actually matters (the link).
+BENIGN_DISCONNECTS = (
+    ConnectionAbortedError,     # WinError 10053, by far the most common here
+    ConnectionResetError,       # WinError 10054
+    BrokenPipeError,
+    TimeoutError,
+)
+
 
 # (method, compiled path, handler, param names)
 ROUTES: list[tuple[str, re.Pattern, object]] = []
@@ -146,8 +161,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(body)
-        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-            pass
+        except BENIGN_DISCONNECTS:
+            pass        # the client went away mid-response; nothing to do
 
     def _json(self, status: int, payload) -> None:
         body = json.dumps(payload, default=str).encode("utf-8")
@@ -313,12 +328,32 @@ class Handler(BaseHTTPRequestHandler):
             for chunk in RUNNER.stream(task, cursor):
                 self.wfile.write(chunk.encode("utf-8"))
                 self.wfile.flush()
-        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
+        except (*BENIGN_DISCONNECTS, OSError):
             pass          # the browser navigated away; nothing to clean up
         self.close_connection = True
 
 
 # --------------------------------------------------------------------------- #
+class _Server(ThreadingHTTPServer):
+    """ThreadingHTTPServer that does not shout about ordinary disconnects."""
+
+    daemon_threads = True
+    # Without this, restarting the server on the same port within the TIME_WAIT
+    # window fails, which is exactly what happens when you Ctrl-C and rerun.
+    allow_reuse_address = True
+
+    def handle_error(self, request, client_address) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, BENIGN_DISCONNECTS):
+            # Still visible under --verbose, because "the browser keeps
+            # dropping the connection" is a real symptom when debugging.
+            if getattr(self, "applier_server", None) and self.applier_server.verbose:
+                print(f"  [web] client {client_address[0]} disconnected: "
+                      f"{type(exc).__name__}")
+            return
+        super().handle_error(request, client_address)
+
+
 class GuiServer:
     def __init__(self, host: str = "127.0.0.1", port: int = 8765,
                  *, verbose: bool = False) -> None:
@@ -352,8 +387,10 @@ class GuiServer:
         handler = partial(Handler)
         Handler.token = self.token
         Handler.port = self.port
-        httpd = ThreadingHTTPServer((self.host, self.port), handler)
-        httpd.daemon_threads = True
+        # applier_server is attached before the socket starts accepting, so
+        # handle_error can always reach the verbose flag.
+        _Server.applier_server = self
+        httpd = _Server((self.host, self.port), handler)
         httpd.applier_server = self
         self._httpd = httpd
 
@@ -362,10 +399,11 @@ class GuiServer:
         try:
             httpd.serve_forever(poll_interval=0.3)
         except KeyboardInterrupt:
-            pass
+            print("\n  stopping…", flush=True)
         finally:
             RUNNER.stop_all()
             httpd.server_close()
+            print("  applier stopped.", flush=True)
 
     def shutdown(self) -> None:
         if self._httpd:
