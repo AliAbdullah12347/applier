@@ -186,12 +186,42 @@ def set_secret(env_name: str, value: str, *, service: str = "applier") -> None:
     keyring.set_password(service, env_name, value)
 
 
+# Keys that *look* secret by substring but hold a name, not a value.
+# `api_key_env: GEMINI_API_KEY` is the name of an environment variable; the
+# key itself lives in the OS keychain and never appears in config at all.
+#
+# Masking these is not merely noisy, it corrupts: the settings screen reads
+# this value into a form field, and saving the form would write "GEM***" back
+# as the variable to look the key up under. A redaction that round-trips into
+# the config file is worse than no redaction.
+NOT_SECRET_SUFFIXES = ("_env", "_var", "_name", "_path", "_file", "_ref")
+
+
+def is_secret_key(name: str) -> bool:
+    """Whether a config key holds a secret VALUE.
+
+    Matching on a bare substring is what caused the trouble: "token" is inside
+    "max_output_tokens", and "api_key" is inside "api_key_env". Both are
+    ordinary settings a person edits, and masking them means the settings form
+    reads back a mask and can save it over the real value.
+
+    So the name must match on an underscore boundary — equal to a secret
+    name, or carrying it as a leading or trailing segment — and must not end
+    in a suffix that marks it as a reference to a secret rather than one.
+    """
+    key = str(name).lower()
+    if key.endswith(NOT_SECRET_SUFFIXES):
+        return False
+    return any(key == s or key.endswith("_" + s) or key.startswith(s + "_")
+               for s in SECRET_KEYS)
+
+
 def redact(obj: Any) -> Any:
     """Deep-copy with secret-looking values masked. Use before logging anything."""
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
-            if any(s in str(k).lower() for s in SECRET_KEYS) and isinstance(v, str) and v:
+            if is_secret_key(k) and isinstance(v, str) and v:
                 out[k] = v[:3] + "***" if len(v) > 3 else "***"
             else:
                 out[k] = redact(v)

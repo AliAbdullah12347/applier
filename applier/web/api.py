@@ -893,6 +893,14 @@ def put_settings(body, **_kw) -> dict:
     for k, v in updates.items():
         if k not in WRITABLE:
             raise ApiError(f"{k!r} is not editable from the GUI")
+        # A form field populated from a redacted read, then saved unchanged,
+        # would persist the mask as the real value. `redact` is careful not to
+        # mask anything writable, but this is the cheap second line: a config
+        # value ending in "***" is never something a person typed.
+        if isinstance(v, str) and v.endswith("***"):
+            raise ApiError(
+                f"{k!r} looks like a redacted placeholder, not a real value — "
+                f"reload the page and type it again")
         caster = WRITABLE[k]
         try:
             clean[k] = bool(v) if caster is bool else caster(v)
