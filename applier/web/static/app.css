@@ -30,6 +30,11 @@
 
 * { box-sizing: border-box; }
 
+/* The drawer and the modal set `display` in their own rules, and a class
+   selector outranks the user-agent rule behind the `hidden` attribute. Without
+   this they render on top of the page from the first paint. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0; height: 100%;
   background: var(--bg); color: var(--text);
@@ -278,3 +283,43 @@ img.shot { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; }
 .check .mark { flex: none; width: 16px; font-weight: 700; }
 .check.ok .mark { color: var(--ok); } .check.bad .mark { color: var(--bad); }
 .check .detail { color: var(--text-3); font-size: 12px; font-family: var(--mono); word-break: break-all; }
+
+/* --- generated utilities ------------------------------------------------
+   CSP forbids style attributes (style-src 'self'), and relaxing that to
+   'unsafe-inline' for a few dozen margins is the wrong trade. These are
+   produced from the inline styles the panels used to carry. Regenerate
+   rather than hand-edit if the panels change. */
+.u-bordercolor-varbad { border-color: var(--bad); }
+.u-c1-2 { text-align: center; max-width: 52ch; line-height: 1.7; }
+.u-c2-2 { font-size: 16px; font-weight: 600; }
+.u-c3-2 { flex: 1; min-width: 220px; }
+.u-c4-2 { margin-top: 8px; word-break: break-all; }
+.u-c5-2 { max-height: 340px; margin-top: 10px; }
+.u-c6-2 { max-width: 240px; margin-bottom: 0; }
+.u-cur-pointer { cursor: pointer; }
+.u-gtc-repeatautofitminmax148px1fr { grid-template-columns: repeat(auto-fit,minmax(148px,1fr)); }
+.u-m-0 { margin: 0; }
+.u-m-8px00 { margin: 8px 0 0; }
+.u-maxw-420px { max-width: 420px; }
+.u-mb-10px { margin-bottom: 10px; }
+.u-mb-11px { margin-bottom: 11px; }
+.u-mb-12px { margin-bottom: 12px; }
+.u-mb-14px { margin-bottom: 14px; }
+.u-mb-16px { margin-bottom: 16px; }
+.u-mb-2px { margin-bottom: 2px; }
+.u-mb-8px { margin-bottom: 8px; }
+.u-minheight-220px { min-height: 220px; }
+.u-minheight-480px { min-height: 480px; }
+.u-ml-10px { margin-left: 10px; }
+.u-ml-22px { margin-left: 22px; }
+.u-ml-6px { margin-left: 6px; }
+.u-mt-10px { margin-top: 10px; }
+.u-mt-12px { margin-top: 12px; }
+.u-mt-14px { margin-top: 14px; }
+.u-mt-4px { margin-top: 4px; }
+.u-mt-6px { margin-top: 6px; }
+.u-mt-8px { margin-top: 8px; }
+.u-td-none { text-decoration: none; }
+.u-w-84px { width: 84px; }
+.u-w-90px { width: 90px; }
+.u-w-auto { width: auto; }

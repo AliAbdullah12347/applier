@@ -29,8 +29,14 @@ credentials.json
 
 # generated artifacts
 data/board_tokens.json
+# `data/*.db` alone is not enough. SQLite runs in WAL mode here, so the live
+# data also sits in applier.db-wal and applier.db-shm -- and those matched
+# nothing, so `git add -A` staged a file full of real job and application
+# rows. Glob the sidecars too.
 data/*.db
+data/*.db-*
 data/*.sqlite3
+data/*.sqlite3-*
 applications/
 out/
 *.aux
@@ -64,3 +70,4 @@ tool-results/
 
 # GUI-written settings overlay: one person's choices, not the shipped defaults
 config/settings.local.yaml
+.claude/launch.json

@@ -108,10 +108,21 @@ def test_api_requires_the_token_even_from_loopback():
     assert err is not None
 
 
-def test_shell_html_loads_without_a_token():
-    """The one exception: it holds no data and must load before any script runs."""
-    assert S.authorize(method="GET", path="/",
+@pytest.mark.parametrize("path", ["/", "/index.html", "/app.css", "/app.js",
+                                  "/panels/jobs.js"])
+def test_static_files_load_without_a_token(path):
+    """A <link> or <script src> cannot set a custom header, so the static tree
+    must be reachable without one. Safe only because it carries no data."""
+    assert S.authorize(method="GET", path=path,
                        headers=H({"Host": "127.0.0.1:8765"}), port=8765, token="T") is None
+
+
+def test_static_tree_is_read_only():
+    """Unauthenticated GET is fine; unauthenticated anything else is not."""
+    for method in ("POST", "PUT", "DELETE", "PATCH"):
+        assert S.authorize(method=method, path="/app.js",
+                           headers=H({"Host": "127.0.0.1:8765"}),
+                           port=8765, token="T") is not None
 
 
 def test_rebinding_is_refused_before_the_token_is_checked():
@@ -247,3 +258,34 @@ def test_live_security_headers_are_present(live):
 def test_live_options_gets_no_cors(live):
     status, _ = _req(live, "/api/state", token=live.token, method="OPTIONS")
     assert status == 405
+
+
+def test_live_served_html_does_not_contain_the_token(live):
+    """The regression this replaced.
+
+    An earlier version injected the token into index.html. But index.html has
+    to be fetchable without a token — a <script src> cannot send a header — so
+    any local process could simply read the page and take it. The token now
+    travels in the URL fragment, which never reaches the server at all.
+    """
+    status, body = _req(live, "/index.html")
+    assert status == 200
+    assert live.token.encode() not in body
+    assert b"__APPLIER_TOKEN__" not in body, "template placeholder left in the page"
+
+
+def test_live_static_assets_load_unauthenticated_with_correct_types(live):
+    """The bug that made the first load render as a blank white page: Windows
+    resolves .css and .js through the registry, and a browser with strict MIME
+    checking refuses whatever it gets back."""
+    for path, expect in (("/app.css", "text/css"), ("/app.js", "text/javascript")):
+        r = urllib.request.Request(f"{live.url.rstrip('/')}{path}")
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            assert resp.status == 200
+            assert expect in resp.headers.get("Content-Type", "")
+
+
+def test_the_entry_url_puts_the_token_in_the_fragment(live):
+    """A fragment is never transmitted, so it cannot land in a log."""
+    assert f"#t={live.token}" in live.entry_url
+    assert "?" not in live.entry_url, "a query string would reach the server"

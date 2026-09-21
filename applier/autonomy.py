@@ -84,13 +84,23 @@ def current(settings) -> str:
     lvl = settings.get("autonomy.level", None)
     if lvl in LEVELS:
         return lvl
+
     mode = settings.get("apply.mode", "auto")
     if mode == "dry_run":
         return INVOLVED
     if mode == "review":
         return REVIEW
-    threshold = float(settings.get("search.min_score_to_autoapply", 0.70))
-    return ASSISTED if threshold >= 0.72 else AUTONOMOUS
+
+    # `mode: auto` alone does not distinguish "assisted" from "fully
+    # autonomous" — the threshold is the only other signal, and a
+    # hand-written 0.70 was never a deliberate vote for either one.
+    #
+    # So ambiguity resolves DOWNWARD. Reporting the higher level would put
+    # "Fully autonomous" on screen for someone who never chose it, and the
+    # difference between the two is whether this software sends applications
+    # in a real person's name unattended. An under-claim costs one click; an
+    # over-claim costs an application he did not agree to.
+    return AUTONOMOUS if str(lvl or "").strip() == AUTONOMOUS else ASSISTED
 
 
 def apply_level(settings, key: str) -> Level:

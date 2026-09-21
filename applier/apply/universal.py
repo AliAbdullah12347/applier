@@ -270,6 +270,14 @@ class FillResult:
     mismatches: list[dict] = dc_field(default_factory=list)
     captcha: bool = False
 
+    # The audit trail, in the form a human can actually check months later.
+    # `filled` is keyed by CSS selector, which is what the browser needed and
+    # is useless for answering "what did I tell this employer, and where did
+    # that answer come from?". integrity.log_every_submitted_answer is only
+    # honoured if the record carries the question and the provenance too, so
+    # each entry is {question, answer, source, selector, legal}.
+    audit: list[dict] = dc_field(default_factory=list)
+
 
 class UniversalFiller:
     def __init__(self, bank: AnswerBank, router, settings: Config, profile: Config) -> None:
@@ -440,9 +448,13 @@ class UniversalFiller:
                 elif self.p.get("work_authorization.halt_if_no_qualifier_field", True):
                     note = self._find_free_text_near(fields, f)
                     if note is not None:
-                        self._set(page, note.selector, r.qualifier_text, res)
+                        self._set(page, note.selector, r.qualifier_text, res,
+                                  question=f"qualifier for: {f.question}",
+                                  source=r.source, legal=True)
 
-            ok = self._set(page, sel, value, res)
+            ok = self._set(page, sel, value, res, question=f.question,
+                           source=r.source,
+                           legal=bool(getattr(r, "is_legal", False)))
             if ok:
                 self.bank.mark_used(f.question)
 
@@ -463,7 +475,8 @@ class UniversalFiller:
         return res
 
     # ------------------------------------------------------------------ #
-    def _set(self, page, selector: str, value: str, res: FillResult) -> bool:
+    def _set(self, page, selector: str, value: str, res: FillResult,
+             *, question: str = "", source: str = "", legal: bool = False) -> bool:
         try:
             out = page.evaluate(SET_VALUE_JS, {"selector": selector, "value": value})
         except Exception as e:
@@ -471,6 +484,13 @@ class UniversalFiller:
             return False
         if isinstance(out, dict) and out.get("ok"):
             res.filled[selector] = value
+            res.audit.append({
+                "question": question or selector,
+                "answer": value,
+                "source": source or "unknown",
+                "selector": selector,
+                "legal": bool(legal),
+            })
             return True
         res.skipped.append(f"{selector}: {out.get('reason') if isinstance(out, dict) else out}")
         return False

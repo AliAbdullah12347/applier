@@ -10,7 +10,35 @@
  * employer pages, and an employer page is not a trusted source.
  */
 
-const TOKEN = window.__APPLIER_TOKEN__;
+/* The session token arrives in the URL fragment (#t=...) because a fragment is
+ * never transmitted — it cannot reach a server log, a Referer header or a
+ * proxy. It is moved into sessionStorage so a reload keeps working, and wiped
+ * from the address bar immediately so it is not sitting in a screen-share.
+ *
+ * sessionStorage, not localStorage: the token dies with the process that
+ * minted it, so persisting it past the tab would only leave a stale one. */
+const TOKEN = (() => {
+  const fromHash = /(?:^|[#&])t=([\w-]+)/.exec(location.hash || '');
+  if (fromHash) {
+    try { sessionStorage.setItem('applier.token', fromHash[1]); } catch { /* private mode */ }
+    history.replaceState(null, '', location.pathname + location.search);
+    return fromHash[1];
+  }
+  try { return sessionStorage.getItem('applier.token') || ''; } catch { return ''; }
+})();
+
+export const hasToken = () => Boolean(TOKEN);
+export const token = () => TOKEN;
+
+/* Pasting the link from the terminal into a tab that is already open changes
+ * only the fragment, which does not reload the page — so the module above has
+ * already run and seen nothing. Without this, the natural thing to do after a
+ * server restart (paste the new link into the tab you still have open) appears
+ * to do nothing at all. */
+window.addEventListener('hashchange', () => {
+  const m = /(?:^|[#&])t=([\w-]+)/.exec(location.hash || '');
+  if (m && m[1] !== TOKEN) location.reload();
+});
 
 /* ------------------------------------------------------------------ api -- */
 export async function api(path, { method = 'GET', body = null } = {}) {
@@ -18,12 +46,10 @@ export async function api(path, { method = 'GET', body = null } = {}) {
     method,
     headers: {
       'X-Applier-Token': TOKEN,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
+      ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : null,
     cache: 'no-store',
-    credentials: 'omit',
-  });
+    credentials: 'omit' });
   let data = null;
   try { data = await res.json(); } catch { /* non-JSON: handled below */ }
   if (!res.ok) throw new Error((data && data.error) || `${res.status} ${res.statusText}`);
@@ -38,6 +64,34 @@ export const del   = (p)     => api(p, { method: 'DELETE' });
 
 export function artifactUrl(rel) {
   return `/api/artifact?rel=${encodeURIComponent(rel)}`;
+}
+
+/* Artifacts need the token header, and an <img src> or <iframe src> cannot
+ * send one. So the bytes are fetched here and handed back as a blob: URL,
+ * which those tags accept and the CSP allows. The caller owns the URL and
+ * must revokeObjectURL it when done, or a session spent flicking through
+ * screenshots leaks every one of them. */
+export async function artifactBlobUrl(rel) {
+  const res = await fetch(artifactUrl(rel), {
+    headers: { 'X-Applier-Token': TOKEN },
+    cache: 'no-store',
+    credentials: 'omit' });
+  if (!res.ok) {
+    let msg = `${res.status}`;
+    try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
+    throw new Error(msg);
+  }
+  return URL.createObjectURL(await res.blob());
+}
+
+/* Same fetch, but for a file we want to display as text rather than frame. */
+export async function artifactText(rel) {
+  const res = await fetch(artifactUrl(rel), {
+    headers: { 'X-Applier-Token': TOKEN },
+    cache: 'no-store',
+    credentials: 'omit' });
+  if (!res.ok) throw new Error(`could not read ${rel}`);
+  return res.text();
 }
 
 /* --------------------------------------------------------------- helpers -- */
@@ -63,17 +117,54 @@ export function el(tag, attrs = {}, ...children) {
 
 export function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); return node; }
 
-export function fmtDate(s) {
-  if (!s) return '—';
+/* Every URL rendered as a link came out of an ATS feed or an employer's page,
+ * so none of them is trusted. The CSP already refuses to run a `javascript:`
+ * href under script-src 'self', but that is one layer, and this origin holds
+ * the session token — so the scheme is checked here too. Anything that is not
+ * plain http(s) renders as inert text instead of a link. */
+export function safeUrl(u) {
+  if (!u) return null;
+  try {
+    const parsed = new URL(String(u), location.origin);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : null;
+  } catch { return null; }
+}
+
+/** A link, or plain text when the URL is missing or not http(s). */
+export function link(url, label, attrs = {}) {
+  const safe = safeUrl(url);
+  if (!safe) return el('span', { class: 'dim' }, label);
+  return el('a', { ...attrs, href: safe, target: '_blank', rel: 'noreferrer noopener' }, label);
+}
+
+/* Dates reach us in four shapes, because four different sources write them:
+ * SQLite 'YYYY-MM-DD HH:MM:SS', a bare 'YYYY-MM-DD', an epoch in seconds from
+ * the ATS feeds, and an epoch in milliseconds from the task runner. Parsing
+ * only the first two is what put a raw 1770966668 on the job detail page. */
+function toDate(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date) return isNaN(v) ? null : v;
+  if (typeof v === 'number' || /^\d{9,14}$/.test(String(v).trim())) {
+    const n = Number(v);
+    // Seconds and milliseconds are told apart by magnitude: anything below
+    // ~1e11 as milliseconds would be 1973, which no job posting is.
+    const d = new Date(n < 1e11 ? n * 1000 : n);
+    return isNaN(d) ? null : d;
+  }
+  const s = String(v).trim();
   const d = new Date(s.length <= 10 ? `${s}T00:00:00` : s.replace(' ', 'T'));
-  if (isNaN(d)) return s;
+  return isNaN(d) ? null : d;
+}
+
+export function fmtDate(v) {
+  const d = toDate(v);
+  if (!d) return v ? String(v) : '—';
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' });
 }
 
-export function fmtAgo(s) {
-  if (!s) return '—';
-  const d = new Date(s.replace(' ', 'T'));
-  if (isNaN(d)) return s;
+export function fmtAgo(v) {
+  const d = toDate(v);
+  if (!d) return v ? String(v) : '—';
   const mins = Math.round((Date.now() - d.getTime()) / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
@@ -98,8 +189,7 @@ const PILLS = {
   submitted: 'ok', done: 'ok', pass: 'ok', offer: 'ok', interview: 'ok', replied: 'ok',
   queued: 'info', preparing: 'info', ready: 'info', running: 'info', drafted: 'info', oa: 'info',
   needs_input: 'warn', captcha: 'warn', scored: 'warn', new: 'warn', harvested: 'warn',
-  failed: 'bad', rejected: 'bad', blocked: 'bad', rejection: 'bad', skipped: 'bad',
-};
+  failed: 'bad', rejected: 'bad', blocked: 'bad', rejection: 'bad', skipped: 'bad' };
 export function pill(text, kind) {
   return el('span', { class: `pill ${kind || PILLS[text] || ''}` }, text || '—');
 }
@@ -125,8 +215,7 @@ export function modal(title, bodyNode, actions = []) {
   for (const a of actions) {
     actH.appendChild(el('button', {
       class: `btn ${a.primary ? 'btn-primary' : a.danger ? 'btn-danger' : ''}`,
-      onclick: async () => { const keep = await a.onClick?.(); if (!keep) close(); },
-    }, a.label));
+      onclick: async () => { const keep = await a.onClick?.(); if (!keep) close(); } }, a.label));
   }
   actH.appendChild(el('button', { class: 'btn btn-ghost', onclick: close }, 'Close'));
   host.hidden = false;
@@ -181,8 +270,7 @@ export function watchTask(task, { onDone } = {}) {
       const res = await fetch(`/api/tasks/${task.id}/stream`, {
         headers: { 'X-Applier-Token': TOKEN },
         signal: controller.signal,
-        cache: 'no-store',
-      });
+        cache: 'no-store' });
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
@@ -267,8 +355,7 @@ async function navigate(id, params = {}) {
     params,
     go: navigate,
     refresh: () => navigate(currentPanel, params),
-    state: lastState,
-  };
+    state: lastState };
   try {
     await mod.render(ctx);
   } catch (e) {
@@ -334,11 +421,25 @@ function wireChrome() {
 }
 
 async function boot() {
+  const bootEl = document.getElementById('boot');
+  if (!TOKEN) {
+    clear(bootEl).append(
+      el('div', { class: 'u-c1-2' },
+        el('p', {}, 'No session token.'),
+        el('p', { class: 'small' },
+          'Open the link that "applier gui" printed in your terminal — the token ' +
+          'is in the part after the #, and it is not stored anywhere on disk.')));
+    return;
+  }
   try {
     await get('/api/state');
   } catch (e) {
-    document.getElementById('boot').textContent =
-      `Could not reach the applier server: ${e.message}`;
+    clear(bootEl).append(
+      el('div', { class: 'u-c1-2' },
+        el('p', {}, `Could not reach the applier server: ${e.message}`),
+        el('p', { class: 'small' },
+          'If the server was restarted the token changed. Open the new link ' +
+          'from the terminal.')));
     return;
   }
   document.getElementById('boot').hidden = true;

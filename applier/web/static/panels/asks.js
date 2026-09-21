@@ -8,8 +8,7 @@
  */
 
 import {
-  el, clear, get, post, patch, del, pill, fmtAgo, toast, confirmDialog, go, refreshChrome,
-} from '../app.js';
+  el, clear, get, post, patch, del, pill, fmtAgo, toast, confirmDialog, go, refreshChrome } from '../app.js';
 
 /* Survives ctx.refresh() so that saving an answer from the second tab does
  * not bounce you back to the first one. */
@@ -36,8 +35,7 @@ export async function render(ctx) {
         for (const b of tabs.children) b.classList.toggle('on', b.dataset.tab === id);
         draw(clear(body), ctx);
       },
-      dataset: { tab: id },
-    }, label));
+      dataset: { tab: id } }, label));
   }
 
   ctx.view.append(tabs, body);
@@ -94,12 +92,16 @@ function askCard(a, onGone) {
   const input = controlFor(a, question);
   const saveBtn = el('button', { class: 'btn btn-primary' }, 'Save');
   const dropBtn = el('button', { class: 'btn btn-ghost' }, 'Dismiss');
-  const err = el('div', { class: 'small', style: 'color:var(--bad)' });
+
+  /* A slot rather than a styled span: the CSP forbids inline styles, so the
+   * only reliable way to make an error look like an error is the banner. */
+  const err = el('div', {});
+  const fail = (msg) => clear(err).appendChild(el('div', { class: 'banner bad' }, msg));
 
   saveBtn.onclick = async () => {
     const value = String(input.value || '').trim();
     if (!value) {
-      clear(err).appendChild(document.createTextNode('An answer is required.'));
+      fail('An answer is required.');
       input.focus();
       return;
     }
@@ -114,7 +116,7 @@ function askCard(a, onGone) {
     } catch (e) {
       saveBtn.disabled = false;
       dropBtn.disabled = false;
-      clear(err).appendChild(document.createTextNode(e.message));
+      fail(e.message);
     }
   };
 
@@ -134,7 +136,7 @@ function askCard(a, onGone) {
     } catch (e) {
       saveBtn.disabled = false;
       dropBtn.disabled = false;
-      clear(err).appendChild(document.createTextNode(e.message));
+      fail(e.message);
     }
   };
 
@@ -144,10 +146,10 @@ function askCard(a, onGone) {
       el('span', { class: 'muted' }, where),
       el('span', { class: 'dim' }, `asked ${fmtAgo(a.created_at)}`),
       a.field_type ? pill(a.field_type, 'info') : null),
-    a.context ? el('div', { class: 'small dim', style: 'margin-top:6px' }, a.context) : null,
-    el('div', { style: 'margin-top:10px' }, input),
+    a.context ? el('div', { class: 'small dim u-mt-6px' }, a.context) : null,
+    el('div', { class: 'u-mt-10px' }, input),
     err,
-    el('div', { class: 'row', style: 'margin-top:10px' }, saveBtn, dropBtn),
+    el('div', { class: 'row u-mt-10px' }, saveBtn, dropBtn),
   );
   return card;
 }
@@ -174,9 +176,9 @@ function gapsCard(gaps) {
     el('div', { class: 'small muted' },
       'Filling these in Settings resolves whole classes of question at once, '
       + 'and keeps legal answers out of the model\'s hands.'),
-    el('div', { style: 'margin-top:8px' },
+    el('div', { class: 'u-mt-8px' },
       ...gaps.map((g) => el('span', { class: 'chip' }, g))),
-    el('div', { class: 'row', style: 'margin-top:12px' },
+    el('div', { class: 'row u-mt-12px' },
       el('button', { class: 'btn', onclick: () => go('settings') }, 'Open Settings')),
   );
   return card;
@@ -186,8 +188,7 @@ function gapsCard(gaps) {
 async function renderBank(host, ctx) {
   const tableHost = el('div', {});
   const search = el('input', {
-    type: 'text', placeholder: 'Search questions and answers…', autocomplete: 'off',
-  });
+    type: 'text', placeholder: 'Search questions and answers…', autocomplete: 'off' });
 
   let timer = null;
   search.oninput = () => {
@@ -205,7 +206,7 @@ async function renderBank(host, ctx) {
   const card = el('div', { class: 'card' },
     el('h2', {}, 'Remembered answers',
       el('span', { class: 'sub' }, 'reused automatically on every form')),
-    el('div', { class: 'filters', style: 'margin-bottom:12px' }, search),
+    el('div', { class: 'filters u-mb-12px' }, search),
     tableHost);
   host.appendChild(card);
 

@@ -7,8 +7,7 @@
  */
 
 import {
-  el, clear, get, post, runTask, pill, fmtDate, toast,
-} from '../app.js';
+  el, clear, get, post, runTask, pill, fmtDate, toast, link } from '../app.js';
 
 const KINDS = [
   { key: 'github_org',  label: 'GitHub org',  placeholder: 'vercel' },
@@ -23,8 +22,7 @@ const STAGES = ['harvested', 'drafted', 'sent', 'replied', 'declined', 'skipped'
    look like something the tool did. */
 const STAGE_KIND = {
   harvested: 'warn', drafted: 'info', sent: 'pin',
-  replied: 'ok', declined: 'bad', skipped: 'bad',
-};
+  replied: 'ok', declined: 'bad', skipped: 'bad' };
 
 export async function render(ctx) {
   ctx.actions.append(
@@ -57,15 +55,12 @@ export async function render(ctx) {
 /* ------------------------------------------------------------ find people -- */
 function harvestCard(ctx) {
   const kindSel = el('select', {
-    style: 'width:auto',
-    onchange: () => { input.placeholder = placeholderFor(kindSel.value); },
-  }, ...KINDS.map((k) => el('option', { value: k.key }, k.label)));
+    class: 'u-w-auto', onchange: () => { input.placeholder = placeholderFor(kindSel.value); } }, ...KINDS.map((k) => el('option', { value: k.key }, k.label)));
 
   const input = el('input', {
     type: 'text',
     placeholder: placeholderFor(KINDS[0].key),
-    onkeydown: (e) => { if (e.key === 'Enter') harvest(); },
-  });
+    onkeydown: (e) => { if (e.key === 'Enter') harvest(); } });
 
   const btn = el('button', { class: 'btn btn-primary', onclick: harvest }, 'Harvest');
 
@@ -94,7 +89,7 @@ function harvestCard(ctx) {
       el('span', { class: 'sub' }, 'public sources only — an org, a repo, or a team page')),
     el('div', { class: 'row' },
       kindSel,
-      el('div', { style: 'flex:1;min-width:220px' }, input),
+      el('div', { class: 'u-c3-2' }, input),
       btn));
 }
 
@@ -105,8 +100,7 @@ function placeholderFor(key) {
 /* --------------------------------------------------------- draft messages -- */
 function draftCard(ctx) {
   const limit = el('input', {
-    type: 'number', value: '4', min: '1', max: '25', style: 'width:84px',
-  });
+    type: 'number', value: '4', min: '1', max: '25', class: 'u-w-84px' });
   const btn = el('button', { class: 'btn btn-primary', onclick: draft }, 'Draft');
 
   async function draft() {
@@ -129,7 +123,7 @@ function draftCard(ctx) {
       el('span', { class: 'muted small' }, 'How many'),
       limit,
       btn),
-    el('div', { class: 'dim small', style: 'margin-top:8px' },
+    el('div', { class: 'dim small u-mt-8px' },
       'Drafting respects the weekly and per-company caps. A contact with no verifiable '
       + 'hook is dropped rather than padded with filler, so you may get fewer than you asked for.'));
 }
@@ -147,18 +141,16 @@ function renderContacts(host, contacts) {
   let query = '';
 
   const stageSel = el('select', {
-    onchange: (e) => { stageFilter = e.target.value; draw(); },
-  }, el('option', { value: 'all' }, 'All stages'),
+    onchange: (e) => { stageFilter = e.target.value; draw(); } }, el('option', { value: 'all' }, 'All stages'),
      ...STAGES.map((s) => el('option', { value: s }, s)));
 
   const search = el('input', {
     type: 'text', placeholder: 'Search name or company',
-    oninput: (e) => { query = e.target.value.trim().toLowerCase(); draw(); },
-  });
+    oninput: (e) => { query = e.target.value.trim().toLowerCase(); draw(); } });
 
   const count = el('span', { class: 'dim small' });
 
-  host.appendChild(el('div', { class: 'filters', style: 'margin-bottom:10px' },
+  host.appendChild(el('div', { class: 'filters u-mb-10px' },
     stageSel, search, el('span', { class: 'spacer' }), count));
 
   const tbody = el('tbody');
@@ -197,7 +189,7 @@ function contactRow(c, tbody) {
   let stagePill = pill(c.stage, STAGE_KIND[c.stage]);
   let settled = c.stage;
 
-  const stageSel = el('select', { style: 'width:auto', onchange: onStage });
+  const stageSel = el('select', { class: 'u-w-auto', onchange: onStage });
   for (const s of STAGES) stageSel.appendChild(el('option', { value: s }, s));
   stageSel.value = c.stage;
 
@@ -265,18 +257,15 @@ function draftRow(c) {
   if (c.hook_fact) meta.push(el('div', { class: 'dim small' }, `Hook: ${c.hook_fact}`));
   // hook_source_url comes off an employer or GitHub page, so only an http(s)
   // value is ever put in an href — a javascript: URL must not become a link.
-  if (c.hook_source_url && /^https?:\/\//i.test(c.hook_source_url)) {
+  if (c.hook_source_url) {
     meta.push(el('div', { class: 'small' },
-      el('a', {
-        href: c.hook_source_url, target: '_blank', rel: 'noopener noreferrer',
-        class: 'muted',
-      }, 'Source page')));
+      link(c.hook_source_url, 'Source page', { class: 'muted' })));
   }
   if (c.last_contact) {
     meta.push(el('div', { class: 'dim small' }, `You marked this sent ${fmtDate(c.last_contact)}.`));
   }
 
-  const bar = el('div', { class: 'row', style: 'margin-top:8px' },
+  const bar = el('div', { class: 'row u-mt-8px' },
     el('button', { class: 'btn btn-sm', onclick: () => copyDraft(c.draft, pre) }, 'Copy message'),
     el('span', { class: 'dim small' },
       'Read it before you send it. Nothing leaves this machine on its own.'));

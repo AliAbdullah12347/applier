@@ -67,6 +67,13 @@ MUST_BE_IGNORED = [
     "config/secrets.yaml",
     ".env",
     "data/applier.db",
+    # SQLite runs in WAL mode, so the live rows also sit in these two. A
+    # .gitignore of `data/*.db` matches neither, and `git add -A` will
+    # happily stage a -wal file full of real application data. Found the
+    # hard way; it stays on the list.
+    "data/applier.db-wal",
+    "data/applier.db-shm",
+    "config/settings.local.yaml",
     ".browser-profile/",
     "applications/",
     "out/",
@@ -171,7 +178,8 @@ class Audit:
     def check_artifacts(self) -> None:
         print("4. generated artifacts")
         bad = [f for f in tracked_files()
-               if f.endswith((".pdf", ".db", ".sqlite3", ".log"))
+               if (f.endswith((".pdf", ".db", ".sqlite3", ".log"))
+                   or ".db-" in f or ".sqlite3-" in f)
                and not f.startswith("docs/")]
         for f in bad:
             self.checks += 1

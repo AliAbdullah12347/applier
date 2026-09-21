@@ -6,8 +6,7 @@
  */
 
 import {
-  el, clear, get, post, runTask, pill, scoreCell, fmtAgo, toast, go, refreshChrome,
-} from '../app.js';
+  el, clear, get, post, runTask, pill, scoreCell, fmtAgo, toast, go, refreshChrome } from '../app.js';
 
 function stat(n, label, kind) {
   return el('div', { class: `stat ${kind || ''}` },
@@ -99,22 +98,19 @@ export async function render(ctx) {
               await refreshChrome();
               ctx.refresh();
             } catch (e) { toast(e.message, 'bad'); }
-          },
-        }),
+          } }),
         el('div', {},
           el('div', { class: 'lv-label' }, l.label),
           el('div', { class: 'lv-blurb' }, l.blurb)),
         l.submits ? pill('submits', 'warn') : pill('never submits', 'ok'),
       ))),
-    el('div', { class: 'row', style: 'margin-top:12px' },
+    el('div', { class: 'row u-mt-12px' },
       el('button', {
         class: 'btn btn-primary',
-        onclick: () => runTask('/api/run', { once: false }, { onDone: ctx.refresh }),
-      }, 'Start autonomous run'),
+        onclick: () => runTask('/api/run', { once: false }, { onDone: ctx.refresh }) }, 'Start autonomous run'),
       el('button', {
         class: 'btn',
-        onclick: () => runTask('/api/run', { once: true }, { onDone: ctx.refresh }),
-      }, 'One cycle only'),
+        onclick: () => runTask('/api/run', { once: true }, { onDone: ctx.refresh }) }, 'One cycle only'),
       el('span', { class: 'dim small' },
         lvl?.submits ? 'This mode submits applications.' : 'This mode never submits.')),
   );
@@ -163,7 +159,7 @@ export async function render(ctx) {
     el('h2', {}, 'System check', el('span', { class: 'sub' }, 'keys, dependencies, a real model call')));
   const docBody = el('div', {}, el('div', { class: 'empty' }, 'Not run yet this session.'));
   docCard.append(
-    el('div', { class: 'row', style: 'margin-bottom:10px' },
+    el('div', { class: 'row u-mb-10px' },
       el('button', { class: 'btn', onclick: runDoctor }, 'Run check')),
     docBody);
   ctx.view.appendChild(docCard);

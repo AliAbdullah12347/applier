@@ -37,8 +37,23 @@ The defences, therefore:
   phone home even if it does execute.
 
 The token lives in memory for the life of the process. It is never written to
-disk, never logged, and never placed in a query string — query strings end up
-in shell history, in screen-shares, and in the browser's own history file.
+disk, never logged, and never placed in a query string — query strings reach
+the server, land in logs, and stick around in browser history.
+
+**How the browser gets it.** In the URL *fragment*: `http://127.0.0.1:8765/#t=…`.
+A fragment is never transmitted — the browser strips it before sending the
+request — so the token cannot appear in a server log or a referrer. The page
+script reads `location.hash`, moves it into `sessionStorage`, and clears the
+address bar.
+
+The rejected alternative was embedding the token in `index.html`. That fails
+the moment you notice `index.html` must be fetchable without a token (a
+`<link>` or `<script src>` tag cannot set a custom header), which would let
+any local process simply `curl` the page and read the token out of it.
+
+So the static files — the same HTML, CSS and JS that are published in the
+public repository — are served unauthenticated, and carry no data. Everything
+under `/api/` requires the token.
 """
 
 from __future__ import annotations
@@ -166,11 +181,17 @@ def authorize(*, method: str, path: str, headers, port: int, token: str) -> str 
     if err:
         return err
 
-    # The shell HTML is the one unauthenticated resource: it has to load before
-    # any script exists to attach a token. It contains no data — it is an empty
-    # frame that fetches everything else, and every one of those fetches is
-    # authenticated.
-    if path in ("/", "/index.html") and method == "GET":
+    # The static tree is unauthenticated, and has to be: a <link> or a
+    # <script src> cannot set a custom header, so requiring the token here
+    # would mean the page could never load its own stylesheet.
+    #
+    # That is safe only because these files carry no data. They are byte for
+    # byte the files published in the public repository — an empty frame plus
+    # the code that fetches everything else. Every one of those fetches is
+    # authenticated. Nothing about this person is in them, and in particular
+    # the token is not: it arrives in the URL fragment instead, which never
+    # reaches the server at all.
+    if method == "GET" and not path.startswith("/api/"):
         return None
 
     return check_token(headers.get(TOKEN_HEADER), token)

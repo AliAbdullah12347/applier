@@ -34,6 +34,15 @@ from .tasks import RUNNER
 
 STATIC = Path(__file__).resolve().parent / "static"
 
+STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+}
+
 # (method, compiled path, handler, param names)
 ROUTES: list[tuple[str, re.Pattern, object]] = []
 
@@ -238,16 +247,15 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_relative_to(STATIC.resolve()) or not target.is_file():
             return self._error(404, "not found")
 
-        ctype, _ = mimetypes.guess_type(target.name)
-        data = target.read_bytes()
+        # Windows resolves MIME types through the registry, where .js and .css
+        # are routinely mapped to something unhelpful by whatever was installed
+        # last. A browser with strict MIME checking then refuses the file, so
+        # the types the UI depends on are pinned here rather than guessed.
+        ctype = STATIC_TYPES.get(target.suffix.lower()) \
+            or mimetypes.guess_type(target.name)[0] \
+            or "application/octet-stream"
 
-        if target.name == "index.html":
-            # The shell is the only response that carries the token, and it is
-            # injected here rather than written into the file so the token never
-            # touches disk.
-            data = data.replace(b"__APPLIER_TOKEN__", self.token.encode("ascii"))
-
-        return self._send(200, data, ctype or "application/octet-stream",
+        return self._send(200, target.read_bytes(), ctype,
                           {"Cache-Control": "no-store"})
 
     # ------------------------------------------------------------ artifacts --
@@ -329,6 +337,17 @@ class GuiServer:
     def url(self) -> str:
         return f"http://{self.host}:{self.port}/"
 
+    @property
+    def entry_url(self) -> str:
+        """The URL to actually open: the token rides in the fragment.
+
+        A fragment is never sent to the server, so the token stays out of
+        access logs, out of the Referer header, and out of anything a proxy
+        might record. The page moves it into sessionStorage and clears it
+        from the address bar on first load.
+        """
+        return f"{self.url}#t={self.token}"
+
     def serve_forever(self, *, open_browser: bool = True) -> None:
         handler = partial(Handler)
         Handler.token = self.token
@@ -339,7 +358,7 @@ class GuiServer:
         self._httpd = httpd
 
         if open_browser:
-            threading.Timer(0.4, lambda: webbrowser.open(self.url)).start()
+            threading.Timer(0.4, lambda: webbrowser.open(self.entry_url)).start()
         try:
             httpd.serve_forever(poll_interval=0.3)
         except KeyboardInterrupt:

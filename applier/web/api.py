@@ -414,7 +414,7 @@ def get_application(_body=None, *, app_id: int, **_kw) -> dict:
         raise ApiError("no such application", 404)
     app = dict(row)
     app["answers"] = _jloads(app.get("answers_json"), [])
-    app["screenshots"] = _jloads(app.get("screenshots"), [])
+    app["screenshots"] = _relativise(_jloads(app.get("screenshots"), []))
     app["artifacts"] = _artifact_listing(app.get("artifact_dir"))
     app["events"] = _rows(db.q(
         "SELECT at, kind, level, message FROM events WHERE job_id=? ORDER BY id",
@@ -422,7 +422,11 @@ def get_application(_body=None, *, app_id: int, **_kw) -> dict:
     return {"application": app}
 
 
-SAFE_SUFFIXES = {".pdf", ".txt", ".tex", ".json", ".png", ".jpg", ".jpeg", ".md", ".log", ".html"}
+# Deliberately excludes .html. Saved employer pages land in artifact
+# directories, and a blob: document inherits the origin of the page that
+# created it — the origin holding this session's token. Serving one as
+# text/plain is a mitigation; not serving it at all is a boundary.
+SAFE_SUFFIXES = {".pdf", ".txt", ".tex", ".json", ".png", ".jpg", ".jpeg", ".md", ".log"}
 
 
 def _artifact_listing(artifact_dir: str | None) -> list[dict]:
@@ -449,6 +453,27 @@ def _artifact_listing(artifact_dir: str | None) -> list[dict]:
             continue
         out.append({"name": f.name, "rel": rel.as_posix(),
                     "size": f.stat().st_size, "suffix": f.suffix.lower()})
+    return out
+
+
+def _relativise(paths: list) -> list[str]:
+    """Normalise stored screenshot paths to artifact-root-relative form.
+
+    Rows written before paths were stored relative hold absolute ones, and the
+    artifact endpoint refuses those by design. Rather than leave the history
+    unviewable, they are converted here; anything that genuinely points
+    outside the artifacts root is dropped rather than rewritten, because a
+    path outside the root is not a screenshot of ours.
+    """
+    root = PATHS["artifacts"].resolve()
+    out: list[str] = []
+    for p in paths or []:
+        try:
+            q = Path(str(p))
+            q = (root / q) if not q.is_absolute() else q
+            out.append(q.resolve().relative_to(root).as_posix())
+        except (ValueError, OSError):
+            continue
     return out
 
 
