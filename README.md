@@ -95,6 +95,7 @@ git clone https://github.com/<you>/applier.git
 cd applier
 python -m venv .venv && .venv\Scripts\activate    # Windows
 pip install -r requirements.txt
+pip install -e .                                  # gives you the `applier` command
 python -m playwright install chromium
 
 cp config/profile.example.yaml config/profile.yaml
@@ -107,6 +108,17 @@ Then open the app:
 ```bash
 applier gui
 ```
+
+> **`'applier' is not recognized`?** The console script lands in Python's
+> `Scripts` directory, which is often not on `PATH` on Windows. Either add it,
+> or skip the install entirely — this works from the project folder with no
+> setup at all:
+>
+> ```bash
+> python -m applier gui
+> ```
+>
+> Every command below works the same way: `python -m applier <command>`.
 
 or drive it from the terminal:
 
