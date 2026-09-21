@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>applier</title>
+<link rel="stylesheet" href="/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#9654;</text></svg>">
+</head>
+<body>
+
+<div id="boot" class="boot">starting…</div>
+
+<div id="shell" hidden>
+  <nav id="sidebar">
+    <div class="brand">
+      <span class="brand-mark">▸</span>
+      <span class="brand-name">applier</span>
+    </div>
+
+    <ul class="nav" id="nav"></ul>
+
+    <div class="nav-foot">
+      <div class="autonomy-mini" id="autonomy-mini" title="Change in Settings"></div>
+      <div class="running" id="running-mini"></div>
+    </div>
+  </nav>
+
+  <main id="main">
+    <header id="topbar">
+      <h1 id="page-title">Dashboard</h1>
+      <div class="topbar-actions" id="topbar-actions"></div>
+    </header>
+    <section id="view" class="view"></section>
+  </main>
+</div>
+
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-head">
+    <strong id="drawer-title">Activity</strong>
+    <div class="drawer-actions">
+      <button class="btn btn-ghost btn-sm" id="drawer-stop" hidden>Stop</button>
+      <button class="btn btn-ghost btn-sm" id="drawer-close">Close</button>
+    </div>
+  </div>
+  <pre id="drawer-log" class="log"></pre>
+</div>
+
+<div id="toasts" class="toasts"></div>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <h2 id="modal-title"></h2>
+    <div id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions"></div>
+  </div>
+</div>
+
+<script>window.__APPLIER_TOKEN__ = "__APPLIER_TOKEN__";</script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

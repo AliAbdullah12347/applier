@@ -15,7 +15,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .config import Config, project_paths
 from .db import Database, get_db, now
@@ -405,9 +405,28 @@ def _bump_cap(db: Database, job: dict) -> None:
 # autonomous loop
 # --------------------------------------------------------------------------- #
 def autonomous_loop(settings: Config, profile: Config, *, max_apps: int | None = None,
-                    once: bool = False, console=None) -> None:
+                    once: bool = False, console=None,
+                    should_stop: Callable[[], bool] | None = None) -> None:
+    """Discover, rank, apply, repeat.
+
+    `should_stop` lets a caller that is not a terminal — the GUI — end the loop
+    cleanly. It is polled only at safe points: between cycles, between
+    applications, and while sleeping. Never during an application, because a
+    submission is a network side effect and abandoning one halfway would leave
+    a row saying "preparing" for something the employer has already received.
+    """
     con = _console(console)
     db = get_db()
+    stop = should_stop or (lambda: False)
+
+    def nap(seconds: float) -> bool:
+        """Sleep in slices so a stop is noticed in a second, not an hour."""
+        end = time.time() + seconds
+        while time.time() < end:
+            if stop():
+                return True
+            time.sleep(min(1.0, end - time.time()))
+        return stop()
     cap = max_apps or int(settings.get("apply.max_per_day", 25))
     per_hour = int(settings.get("apply.max_per_hour", 6))
     interval = int(settings.get("discovery.poll_interval_minutes", 30)) * 60
@@ -419,6 +438,9 @@ def autonomous_loop(settings: Config, profile: Config, *, max_apps: int | None =
               f"{per_hour}/hour. Ctrl-C to stop.")
 
     while True:
+        if stop():
+            con.print("[yellow]stopped.[/yellow]")
+            return
         try:
             discover_jobs(settings, profile, console=con)
             queued = rank_jobs(settings, profile, console=con)
@@ -442,6 +464,9 @@ def autonomous_loop(settings: Config, profile: Config, *, max_apps: int | None =
             con.print("[dim]nothing above the auto-apply threshold this cycle[/dim]")
 
         for job in batch:
+            if stop():
+                con.print("[yellow]stopped between applications.[/yellow]")
+                return
             if done >= cap:
                 con.print(f"[green]daily cap reached ({cap}).[/green]")
                 return
@@ -461,9 +486,13 @@ def autonomous_loop(settings: Config, profile: Config, *, max_apps: int | None =
                 if failures >= fail_limit:
                     con.print(f"[red]{failures} consecutive failures — pausing.[/red]")
                     return
-            time.sleep(max(5, 3600 // max(1, per_hour)))
+            if nap(max(5, 3600 // max(1, per_hour))):
+                con.print("[yellow]stopped.[/yellow]")
+                return
 
         if once:
             return
         con.print(f"[dim]sleeping {interval // 60} min[/dim]")
-        time.sleep(interval)
+        if nap(interval):
+            con.print("[yellow]stopped.[/yellow]")
+            return

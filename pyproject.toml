@@ -15,7 +15,13 @@ applier = "applier.cli:main"
 [tool.setuptools]
 packages = ["applier", "applier.llm", "applier.apply", "applier.apply.adapters",
             "applier.discover", "applier.score", "applier.tailor",
-            "applier.track", "applier.report", "applier.util"]
+            "applier.track", "applier.report", "applier.util",
+            "applier.web", "applier.outreach"]
+
+# The GUI is plain files served off disk -- no bundler, no build step -- so the
+# static tree has to ship with the package or `applier gui` serves 404s.
+[tool.setuptools.package-data]
+"applier.web" = ["static/*.html", "static/*.css", "static/*.js", "static/panels/*.js"]
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
