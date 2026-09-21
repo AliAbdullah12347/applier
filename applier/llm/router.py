@@ -68,6 +68,45 @@ class LLMResponse:
         return parse_json_loose(self.text)
 
 
+
+def _escape_raw_control_chars(text: str) -> str:
+    """Escape newlines/tabs that appear *inside* JSON string literals.
+
+    Models routinely return multi-paragraph prose inside a JSON string with
+    literal newlines, which is invalid JSON. This walks the text tracking
+    whether we are inside a quoted string, so only the control characters that
+    actually break parsing are touched and formatting between tokens is left
+    alone.
+    """
+    out: list[str] = []
+    in_str = False
+    esc = False
+    for ch in text:
+        if in_str:
+            if esc:
+                out.append(ch)
+                esc = False
+            elif ch == '\\':
+                out.append(ch)
+                esc = True
+            elif ch == '"':
+                in_str = False
+                out.append(ch)
+            elif ch == '\n':
+                out.append('\\n')
+            elif ch == '\r':
+                out.append('\\r')
+            elif ch == '\t':
+                out.append('\\t')
+            else:
+                out.append(ch)
+            continue
+        if ch == '"':
+            in_str = True
+        out.append(ch)
+    return ''.join(out)
+
+
 def parse_json_loose(text: str) -> Any:
     """Models wrap JSON in prose and fences no matter how firmly you ask."""
     t = (text or "").strip()
@@ -78,7 +117,21 @@ def parse_json_loose(text: str) -> Any:
         return json.loads(t)
     except json.JSONDecodeError:
         pass
+
+    # Models routinely emit multi-paragraph prose inside a JSON string with
+    # LITERAL newlines, which is invalid JSON. That is not an edge case -- any
+    # cover letter or long free-text answer hits it -- so repair it rather than
+    # failing the whole generation.
+    try:
+        return json.loads(_escape_raw_control_chars(t))
+    except json.JSONDecodeError:
+        pass
+
     # Grab the outermost balanced {...} or [...]
+    # Scan the REPAIRED text: scanning the raw text makes the object branch fail
+    # on an unescaped newline and then silently succeed on an inner array,
+    # returning the wrong value instead of an error.
+    t = _escape_raw_control_chars(t)
     for opener, closer in (("{", "}"), ("[", "]")):
         start = t.find(opener)
         if start == -1:
@@ -191,6 +244,16 @@ def _call_gemini(spec: dict, system: str, user: str, key: str, want_json: bool) 
     }
     if want_json:
         gen["responseMimeType"] = "application/json"
+
+    # Gemini 3.x spends "thinking" tokens that are billed against maxOutputTokens
+    # but never appear in the reply. On a long prompt they can consume most of
+    # the budget and the actual answer comes back truncated mid-sentence -- which
+    # surfaces downstream as a confusing JSON parse error rather than as the
+    # capacity problem it is. Cap the thinking so the budget goes to the answer.
+    budget = spec.get("thinking_budget")
+    if budget is not None:
+        gen["thinkingConfig"] = {"thinkingBudget": int(budget)}
+
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -199,12 +262,24 @@ def _call_gemini(spec: dict, system: str, user: str, key: str, want_json: bool) 
     data = _post(url, headers={"x-goog-api-key": key}, payload=payload,
                  timeout=spec.get("timeout_s", 90))
     try:
-        parts = data["candidates"][0]["content"]["parts"]
+        cand = data["candidates"][0]
+        parts = cand["content"]["parts"]
         text = "".join(p.get("text", "") for p in parts)
     except (KeyError, IndexError) as e:
         fb = data.get("promptFeedback", {})
         raise LLMError(f"gemini: no content ({fb or data})", retryable=False) from e
+
     um = data.get("usageMetadata", {})
+    # Truncation is retryable and worth naming precisely: the caller otherwise
+    # sees "could not parse JSON" and goes looking for a parser bug.
+    if cand.get("finishReason") == "MAX_TOKENS":
+        raise LLMError(
+            f"gemini: output truncated at maxOutputTokens="
+            f"{gen['maxOutputTokens']} (thinking used {um.get('thoughtsTokenCount', 0)} "
+            f"of it). Raise llm.primary.max_output_tokens or lower thinking_budget.",
+            retryable=True,
+        )
+
     return LLMResponse(text, "gemini", model,
                        um.get("promptTokenCount", 0), um.get("candidatesTokenCount", 0), data)
 
