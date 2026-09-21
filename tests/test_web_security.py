@@ -289,3 +289,48 @@ def test_the_entry_url_puts_the_token_in_the_fragment(live):
     """A fragment is never transmitted, so it cannot land in a log."""
     assert f"#t={live.token}" in live.entry_url
     assert "?" not in live.entry_url, "a query string would reach the server"
+
+
+# --------------------------------------------------------------------------- #
+# console hygiene
+# --------------------------------------------------------------------------- #
+def test_an_aborted_connection_prints_no_traceback(live, capfd):
+    """A browser aborting a socket is ordinary traffic, not a fault.
+
+    Every navigation, reload and closed log stream drops a keep-alive socket,
+    and socketserver's default reaction is a full traceback. On a window the
+    user is told to leave open, that reads as a crash and buries the one line
+    that matters — the link with the token in it.
+    """
+    import socket as _socket
+    import struct
+
+    capfd.readouterr()                      # discard anything already buffered
+    for _ in range(4):
+        s = _socket.socket()
+        s.connect(("127.0.0.1", live.port))
+        s.sendall(f"GET / HTTP/1.1\r\nHost: 127.0.0.1:{live.port}\r\n\r\n".encode())
+        time.sleep(0.05)
+        # SO_LINGER 0 sends RST instead of FIN: this is what raises
+        # WinError 10053 inside the handler thread.
+        s.setsockopt(_socket.SOL_SOCKET, _socket.SO_LINGER, struct.pack("hh", 1, 0))
+        s.close()
+    time.sleep(0.8)
+
+    captured = capfd.readouterr()
+    noise = captured.out + captured.err
+    for marker in ("Traceback", "ConnectionAbortedError", "Exception occurred"):
+        assert marker not in noise, (
+            f"an aborted connection printed {marker!r} to the console:\n{noise[:800]}")
+
+
+def test_a_genuine_handler_error_is_still_reported():
+    """Silencing disconnects must not silence real faults."""
+    from applier.web.server import BENIGN_DISCONNECTS
+    assert ValueError not in BENIGN_DISCONNECTS
+    assert RuntimeError not in BENIGN_DISCONNECTS
+    assert Exception not in BENIGN_DISCONNECTS, (
+        "catching Exception here would hide every server bug")
+    assert OSError not in BENIGN_DISCONNECTS, (
+        "OSError is the parent of the disconnect errors AND of real I/O "
+        "failures; listing it would swallow both")
