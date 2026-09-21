@@ -70,6 +70,14 @@ QUESTION_TAXONOMY: list[tuple[str, list[str], bool]] = [
     ], True),
     ("degree_type", [r"degree type", r"what degree", r"level of (degree|education)"], True),
 
+    # ---- voluntary self-identification ---------------------------------- #
+    ("gender", [r"\bgender\b", r"gender identity"], False),
+    ("ethnicity", [r"ethnicit", r"\brace\b", r"racial", r"hispanic", r"latino"], False),
+    ("veteran", [r"veteran", r"armed forces", r"military service"], False),
+    ("disability", [r"disabilit(?:y|ies)", r"\bdisabled\b", r"chronic condition",
+                    r"major life activit"], False),
+    ("pronouns", [r"pronoun"], False),
+
     # ---- factual (from profile, safe to auto-fill) ---------------------- #
     ("first_name", [r"^first name", r"given name"], False),
     ("last_name", [r"^last name", r"family name", r"surname"], False),
@@ -85,7 +93,11 @@ QUESTION_TAXONOMY: list[tuple[str, list[str], bool]] = [
     ("github", [r"git ?hub"], False),
     ("website", [r"portfolio", r"personal website", r"^website", r"other url"], False),
     ("school", [r"school", r"university", r"college", r"institution"], False),
-    ("major", [r"major", r"field of study", r"discipline", r"concentration"], False),
+    # "major" alone is dangerous: EEO disability questions ask about a "major
+    # life activity", and a bare keyword match put the candidate's degree in a
+    # disability field on a real Greenhouse form. Require education context.
+    ("major", [r"\bmajor(?:s|ing)?\b(?!\s+life)", r"field of study", r"discipline",
+               r"course of study", r"area of study", r"concentration"], False),
     ("gpa", [r"\bgpa\b", r"grade point"], False),
     ("start_date", [r"start date", r"available.*start", r"earliest.*start", r"when can you start"], False),
     ("end_date", [r"end date", r"available.*until", r"availability end"], False),
@@ -98,12 +110,6 @@ QUESTION_TAXONOMY: list[tuple[str, list[str], bool]] = [
     ("resume_upload", [r"resume", r"cv upload", r"attach.*resume"], False),
     ("cover_letter_upload", [r"cover letter"], False),
 
-    # ---- voluntary self-identification ---------------------------------- #
-    ("gender", [r"^gender", r"gender identity"], False),
-    ("ethnicity", [r"ethnicity", r"race", r"hispanic or latino"], False),
-    ("veteran", [r"veteran"], False),
-    ("disability", [r"disability", r"disabled"], False),
-    ("pronouns", [r"pronoun"], False),
 ]
 
 LEGAL_IDS = {qid for qid, _, legal in QUESTION_TAXONOMY if legal}

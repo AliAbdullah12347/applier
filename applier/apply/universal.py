@@ -204,10 +204,41 @@ SUBMIT_PATTERNS = [
     r"^submit application", r"^apply$",
 ]
 
-CAPTCHA_MARKERS = [
-    "recaptcha", "hcaptcha", "cf-turnstile", "captcha",
-    "are you a robot", "verify you are human", "cloudflare",
-]
+# Detecting CAPTCHA by grepping raw HTML does not work: pages routinely ship
+# Cloudflare/reCAPTCHA script tags with no challenge presented, so a substring
+# match halts every application. Look for a challenge that is actually
+# RENDERED and visible instead.
+CAPTCHA_DOM_JS = r"""
+() => {
+  const sel = [
+    'iframe[src*="recaptcha/api2/bframe"]',
+    'iframe[src*="hcaptcha.com/captcha"]',
+    'iframe[title*="challenge" i]',
+    'div.g-recaptcha:not(:empty)',
+    'div.h-captcha:not(:empty)',
+    'div.cf-turnstile:not(:empty)',
+    '#challenge-form',
+    '#cf-challenge-running'
+  ];
+  for (const s of sel) {
+    for (const el of document.querySelectorAll(s)) {
+      const r = el.getBoundingClientRect();
+      const st = window.getComputedStyle(el);
+      if (r.width > 40 && r.height > 40 &&
+          st.display !== 'none' && st.visibility !== 'hidden') {
+        return s;
+      }
+    }
+  }
+  // A full-page interstitial: the body says "verify you are human" and there is
+  // essentially nothing else on the page.
+  const t = (document.body ? document.body.innerText : '').toLowerCase();
+  if (t.length < 700 && /verify (you are|yourself)|are you a robot|checking your browser/.test(t)) {
+    return 'interstitial';
+  }
+  return null;
+}
+"""
 
 
 @dataclass
@@ -264,11 +295,21 @@ class UniversalFiller:
         return out
 
     def detect_captcha(self, page) -> bool:
+        """True only when a challenge is actually rendered and visible.
+
+        The naive version grepped page HTML for "recaptcha"/"cloudflare" and
+        fired on every Greenhouse form, because those scripts load whether or
+        not a challenge is shown. A false positive here is expensive: the run
+        halts and waits for a human who has nothing to solve.
+        """
         try:
-            html = page.content().lower()
+            hit = page.evaluate(CAPTCHA_DOM_JS)
         except Exception:
             return False
-        return any(m in html for m in CAPTCHA_MARKERS)
+        if hit:
+            print(f"  [captcha] visible challenge: {hit}")
+            return True
+        return False
 
     # ------------------------------------------------------------------ #
     def resolve_all(self, fields: list[Field], job: dict) -> tuple[dict[str, Resolution], list[Field]]:

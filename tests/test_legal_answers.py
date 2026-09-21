@@ -85,7 +85,7 @@ def bank(tmp_path):
 
     profile = Config({
         "identity": {"full_name": "Test User", "first_name": "Test", "last_name": "User",
-                     "email": "t@example.com", "date_of_birth": "2000-01-01"},
+                     "email": "t@example.com", "date_of_birth": "1900-01-01"},
         "work_authorization": {
             "citizenship": "Elbonia", "us_citizen": False, "visa_status": "F-1 student",
             "answers": {
@@ -116,7 +116,7 @@ def bank(tmp_path):
     ("What is your country of citizenship?", "Elbonia"),
     ("What is your current visa status?", "F-1 student"),
     ("Do you hold a security clearance?", "No"),
-    ("What is your date of birth?", "2000-01-01"),
+    ("What is your date of birth?", "1900-01-01"),
 ])
 def test_resolves_exactly(bank, question, expected):
     assert bank.resolve(question).value == expected

@@ -28,6 +28,7 @@ credentials.json
 *.session
 
 # generated artifacts
+data/board_tokens.json
 data/*.db
 data/*.sqlite3
 applications/
