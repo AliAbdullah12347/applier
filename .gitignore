@@ -9,8 +9,8 @@ config/profile.yaml
 config/bank/claims.yaml
 config/bank/master_resume.md
 config/bank/atoms.yaml
-PLAN.md
-STATE.md
+# The research-phase planning docs now live in private/archive/,
+# which the private/ rule below already covers.
 CLAUDE.md
 private/
 tools/
@@ -65,7 +65,6 @@ Thumbs.db
 
 # research working files (local only, not part of the product)
 research/
-_git_migration_backup/
 tool-results/
 
 # GUI-written settings overlay: one person's choices, not the shipped defaults

@@ -86,6 +86,10 @@ drafts outreach messages without sending them.
 timezone mismatches as fraud signals, so cloud VMs and headless runs get
 applications quietly binned.
 
+Each of these is a rule the system enforces on itself rather than a habit it
+tries to keep. [`docs/INTEGRITY.md`](docs/INTEGRITY.md) goes through all seven,
+what each one prevents, and the code that refuses.
+
 ---
 
 ## Quick start
@@ -109,23 +113,23 @@ Then open the app:
 applier gui
 ```
 
-> **`'applier' is not recognized`?** The console script lands in Python's
-> `Scripts` directory, which is often not on `PATH` on Windows. Either add it,
-> or skip the install entirely — this works from the project folder with no
-> setup at all:
->
-> ```bash
-> python -m applier gui
-> ```
->
-> Every command below works the same way: `python -m applier <command>`.
-
-or drive it from the terminal:
+Or drive it from the terminal:
 
 ```bash
 applier apply https://job.example.com/postings/123   # one link, start to finish
 applier run                                          # autonomous: find and apply
 ```
+
+> **`'applier' is not recognized`?** The console script installs into Python's
+> `Scripts` directory, which is not on `PATH` in a default Windows install.
+> Either add it, or skip `pip install -e .` entirely — the package runs
+> straight out of the project folder with no install at all:
+>
+> ```bash
+> python -m applier gui
+> ```
+>
+> Every command works that way: `python -m applier <command>`.
 
 Requires Python 3.11+, a TeX distribution providing `pdflatex`, and an API key
 for any one supported LLM provider.
@@ -181,6 +185,35 @@ home address and an immigration status. So the GUI:
 - never returns a stored secret from any endpoint.
 
 `tests/test_web_security.py` covers each of these and names the attack it stops.
+
+---
+
+## Repository layout
+
+```
+applier/              the package
+├── cli.py            all 17 commands
+├── pipeline.py       orchestration: discover → gate → score → tailor → fill → track
+├── autonomy.py       the one dial, and what it projects onto
+├── config.py db.py   settings/profile loading, SQLite
+├── apply/            form filling — universal.py, answers.py, adapters/, accounts.py
+├── discover/         free ATS sources and board-token mining
+├── score/            eligibility gates and matching
+├── tailor/           content bank, selection, LaTeX render, PDF verification
+├── outreach/         contact discovery and drafting (no send path)
+├── llm/              provider-agnostic routing with fallbacks
+└── web/              the GUI — api.py, server.py, security.py, static/
+
+config/               settings.yaml (tracked) · profile.yaml + bank/ (yours, gitignored)
+templates/resume/     LaTeX templates
+docs/INTEGRITY.md     the rules the system enforces on itself, and how
+scripts/              audit_privacy.py — the push gate, also run as a test
+tests/                the suite is the spec for everything risky
+```
+
+Generated at runtime and never committed: `data/` (the database),
+`applications/` (per-application artifact bundles), `out/` (drafts and ad-hoc
+renders), `.browser-profile/` (so logins survive between runs).
 
 ---
 
