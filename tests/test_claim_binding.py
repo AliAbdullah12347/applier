@@ -59,6 +59,53 @@ def test_claim_names_are_value_derived_not_positional():
     assert _claim_name("70%").startswith("n_")
 
 
+@pytest.mark.parametrize("a,b", [
+    ("8", "8!"),            # the one that shipped: "8-arc" rendered as "8!-arc"
+    ("25", "25+"),
+    ("70", "70%"),
+    ("3", "3x"),
+    ("5", "5.0"),
+    ("10", "10-20"),
+    ("4", "4%"),
+    ("6", "6!"),
+])
+def test_distinct_values_never_share_a_claim_name(a, b):
+    """A name collision silently binds two unrelated facts to one claim.
+
+    `_shape` already told these apart, but `_claim_name` stripped the suffix,
+    so "8" and "8!" both became `n_8`. The second minted claim overwrote the
+    first, and a bullet reading "Cut 8-arc classification runtime ... across
+    each candidate's 8! point-permutations" rendered on a real PDF as
+    "Cut 8!-arc classification runtime". Found by rendering, not by reading.
+    """
+    assert _claim_name(a) != _claim_name(b), (
+        f"{a!r} and {b!r} share the claim name {_claim_name(a)!r}; one will "
+        f"overwrite the other and both slots will render the same value")
+
+
+def test_name_collision_implies_identity_collision():
+    """The invariant that makes the above impossible by construction.
+
+    Two values may share a name only if they are the same fact. Checked over a
+    spread of forms rather than a handful of pairs, so adding a new suffix to
+    NUMERAL_RE without teaching `_claim_name` about it fails here.
+    """
+    values = [
+        "8", "8!", "25", "25+", "70", "70%", "3", "3x", "5.0", "10-20",
+        "216x", "~216x", "$4,000", "4000", "30 FPS", "30 students",
+        "1,000+ applicants", "12,344", "60-85%", "2 hours", "2 minutes",
+    ]
+    by_name: dict[str, list[str]] = {}
+    for v in values:
+        by_name.setdefault(_claim_name(v), []).append(v)
+
+    for name, group in by_name.items():
+        shapes = {_shape(v) for v in group}
+        assert len(shapes) == 1, (
+            f"claim name {name!r} is shared by values with different "
+            f"identities: {group} -> shapes {shapes}")
+
+
 # --------------------------------------------------------------------------- #
 # end-to-end import
 # --------------------------------------------------------------------------- #

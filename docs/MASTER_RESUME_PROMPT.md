@@ -92,7 +92,7 @@ misread, so follow this grammar literally.
 ```
 ## Experience
 
-### Software Engineer Intern — Acme Corp    [pin]
+### Software Engineer Intern — Acme Corp
 id: exp_acme
 org: Platform Team
 location: Boston, MA
@@ -100,7 +100,7 @@ dates: Jun 2026 -- Aug 2026
 tags: python, backend, api, performance, testing, postgres
 lead_for: default
 
-- Full-length bullet, written naturally, with any numbers inline    [pin]
+- Full-length bullet, written naturally, with any numbers inline    [pin]   <- pins go on BULLETS, never on the ### heading
   ~ A medium-length version of the same bullet, one clause shorter.
   ~~ A short version, under about twelve words.
 - The next bullet for this same role
@@ -185,13 +185,28 @@ Which job families this entry should *lead* the resume for. Valid values only:
 where the entry is genuinely my strongest evidence for that family. Most
 entries should have no `lead_for` at all.
 
-### `[pin]` — at most five in the whole file
+### `[pin]` — read this carefully, it does not do what it looks like
 
-A pin means "appears on every single resume, regardless of the job". Pin my
-single strongest role and at most two or three individual bullets. Over-pinning
-defeats tailoring entirely — if the pinned set alone overflows a page, the
-engine reports the overflow instead of choosing for me, and then I have to come
-back and fix it.
+A pin means "appears on every resume, whatever the job". There are two kinds and
+they are not equivalent:
+
+- **`[pin]` on a bullet** pins that one bullet.
+- **`[pin]` on a `###` heading** pins **every bullet in that entry**, not just
+  the heading. An entry with five bullets and a pinned heading contributes five
+  forced bullets.
+
+So **do not pin headings.** Pin **three to five individual bullets across the
+entire file** and nothing else.
+
+This is not a style preference. Tested on a real render: four pinned headings
+produced thirteen forced bullets, which filled the page before the selector
+could choose anything job-specific — a whole entry relevant to the posting was
+left off, and the output was effectively the same resume for every job. Pinning
+heavily does not make a strong resume; it turns tailoring off.
+
+If the pinned set alone overflows the page, the engine reports which pins did
+not fit rather than silently dropping them, and I have to come back and decide.
+Leaving me that decision is correct behaviour, but it is a chore — avoid it.
 
 ### `id:` — stable, and set on every entry
 
@@ -235,8 +250,32 @@ recruiter can find is worse than either value alone.
 ### If something is ambiguous
 
 Ask. A question costs me ten seconds; a fabricated detail costs me an interview
-I will not know I lost. Put a `TODO:` marker in the bullet and raise it in your
-report rather than filling the gap yourself.
+I will not know I lost.
+
+**But never park the question inside a bullet.** Everything in this file is a
+candidate for selection, and the selector cannot tell a placeholder from a
+finished claim. Tested on a real render: bullets beginning
+`TODO: confirm my ownership` were selected, typeset, and came out on the
+finished PDF — text that would have gone to an employer verbatim.
+
+Two safe ways to leave something unresolved:
+
+1. **Omit the bullet** and ask me about it in your report. Preferred.
+2. **Park it as a single-line HTML comment**, which the importer skips:
+
+```
+- A bullet I have confirmed
+  ~ Its medium version.
+  ~~ Its short version.
+<!-- - UNCONFIRMED: the team built an agentic core with per-character memory -->
+```
+
+The comment must be one line and must start with `<!--`. A multi-line comment
+block does **not** work: only the first line is skipped and the rest is parsed
+as content.
+
+Never use option 2 for anything whose *truth* is in doubt — only for text whose
+wording or ownership I still need to confirm.
 
 ---
 
@@ -252,12 +291,63 @@ report rather than filling the gap yourself.
    number I have not supplied. Ask me for the specific figure.
 3. **Metrics I should sanity-check** — any claim that would be awkward to
    defend under interview questioning, and why.
-4. **Thin coverage** — which of my four target areas (software engineering,
-   AI/ML, cybersecurity, quantitative) has the least evidence behind it, since
-   that tells me what to build next.
+4. **Thin coverage** — which of my target areas has the least evidence behind
+   it, since that tells me what to build next. Name specific technologies a
+   posting in that area would ask for and that nothing in the file supports.
+   Be concrete: "no Kubernetes, no Kafka, nothing distributed" beats "could
+   strengthen infrastructure skills".
 5. **Anything you left out** of the file, and why.
 
 Keep the report short. I will act on it, not read it twice.
+
+---
+
+# After you give me the file — how I check it
+
+Save it as `config/bank/master_resume.md`, then run these three. They take
+about ten seconds together and they are the whole of the verification.
+
+```bash
+python -m applier bank import
+python -m applier bank lint
+python -m applier bank preview --text "paste a real job description here" --render
+```
+
+**`bank import`** rebuilds the machine-readable bank. Watch for:
+
+- `WARNING: unrecognised section heading(s)` — a `##` heading mapped to
+  nothing, and everything under it can never appear on a resume. Fix the
+  heading.
+- The `pinned` count in the summary. If it is much larger than the number of
+  `[pin]` markers on bullets, a heading got pinned and dragged all its bullets
+  with it.
+
+**`bank lint`** must come back clean. The messages that matter:
+
+- `bare numeral 'X' — move it into claims.yaml` — a measurement is sitting in
+  the prose instead of the ledger. Usually means the number was written in a
+  form the extractor does not recognise; rewrite it as `40%`, `3 days`, `25+`.
+- `section '...' is not rendered by any resume template` — as above, a heading
+  problem, caught a second time.
+- `unknown claim` / dangling slot — a phrasing references a number that is not
+  in the ledger. Re-run `bank import`.
+
+**`bank preview`** is the one that proves it. It prints what a real posting
+would actually select, and `--render` produces the PDF so I can look at it.
+Check:
+
+- The selected bullets are the ones that posting should pull, and the shorter
+  `~` variants appear when the page gets tight.
+- **No bullet contains `TODO`, `UNCONFIRMED` or a placeholder.** If one does,
+  that text would be typeset onto a real application.
+- `pinned dropped` is empty. If it is not, the non-negotiables alone overflow
+  the page and I have to cut something.
+- The `gaps` list — the posting's keywords that nothing in my bank covers.
+  This is the "what should I build next" signal, and it is the most useful
+  line of output in the whole system.
+
+If `lint` is clean and `preview --render` gives a one-page PDF with no
+placeholder text in it, the file is correct.
 
 ---
 
@@ -266,9 +356,15 @@ Keep the report short. I will act on it, not read it twice.
 - Does every `###` entry have an `id:`, a `tags:` line, and at least one `- ` bullet?
 - Does every bullet start with `- ` and have both a `~` and a `~~` variant, each indented?
 - Are there 4–6 bullets on each substantial entry, covering genuinely different ground?
-- Are there **five or fewer** `[pin]` markers in the entire file?
+- Are there **no `[pin]` markers on any `###` heading**, and three to five
+  on individual bullets in total?
 - Does `## Skills` contain only `Group: a, b, c` lines, with no `###` and no bullets?
+- Is every `##` heading one of Skills, Experience, Projects, Leadership or
+  Education? Anything else and the content under it never reaches a page.
 - Is every `lead_for:` value one of `ai_ml`, `quant`, `security`, `graphics`, `research`, `default`?
 - Does every number in the file trace to something in my resume or on my site —
   with no exceptions, and nothing rounded "for readability"?
+- Does any bullet contain `TODO`, `UNCONFIRMED`, `<your`, `XXX` or a
+  placeholder of any kind? Every bullet is selectable and will be typeset
+  as written — move it to the report or comment it out on one line.
 - Is the whole file inside one code block?
