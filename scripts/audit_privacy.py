@@ -197,13 +197,96 @@ class Audit:
                     self.fail(f"TEMPLATE {f} contains real-looking {label}: "
                               f"{m.group(0)[:40]}")
 
+    # Values that are personal but match no generic pattern: a university, a
+    # GPA, a nationality, a visa status, a personal domain. The regex checks
+    # above cannot find these, and hardcoding a list of them *here* would leak
+    # them, since this file is published too.
+    #
+    # So the needles are read at runtime from the local, gitignored profile.
+    # Whatever is private to this particular user is, by definition, exactly
+    # what is in it — and the check works for anyone without naming anybody.
+    #
+    # Added after a tracked documentation file was written containing a GPA,
+    # a university and an immigration status, and all five existing checks
+    # passed it.
+    PROFILE_SKIP_KEYS = {
+        # Values too generic to search for without matching everything.
+        "country", "state", "pronouns", "gender", "us_citizen", "remote",
+        "degree", "work_permit_status", "disability_status", "veteran_status",
+        "authorized_now_us", "authorized_now_uk", "authorized_now_eu",
+        "authorized_now_canada", "authorized_now_singapore",
+        "require_sponsorship", "current_cycle", "season", "seasons",
+    }
+
+    def check_profile_values_absent(self) -> None:
+        print("6. personal profile values in tracked files")
+        profile = ROOT / "config" / "profile.yaml"
+        if not profile.exists():
+            print("   no local profile.yaml — skipped")
+            return
+
+        import yaml
+        try:
+            data = yaml.safe_load(profile.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            self.warn(f"could not read profile.yaml to cross-check: {e}")
+            return
+
+        needles: dict[str, str] = {}
+
+        def collect(node, key=""):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    collect(v, str(k))
+            elif isinstance(node, list):
+                for v in node:
+                    collect(v, key)
+            elif isinstance(node, bool):
+                return          # "False" is 5 chars and matched every test file
+            elif isinstance(node, (str, int, float)):
+                s = str(node).strip()
+                # Short values and sentinels produce nothing but false
+                # positives; "ASK" and "Yes" appear in every template.
+                if (len(s) >= 5 and key not in self.PROFILE_SKIP_KEYS
+                        and s.upper() not in ("ASK", "TRUE", "FALSE", "NONE")
+                        and not s.isdigit()):
+                    needles[s] = key
+
+        collect(data)
+
+        # Drop anything identical to the shipped template. Keeping a default
+        # from profile.example.yaml is not a leak -- the value is already
+        # public, by definition, because we published it.
+        example = ROOT / "config" / "profile.example.yaml"
+        if example.exists():
+            template = example.read_text(encoding="utf-8", errors="replace")
+            needles = {n: k for n, k in needles.items() if n not in template}
+
+        if not needles:
+            return
+
+        for f in tracked_files():
+            path = ROOT / f
+            if not path.is_file() or f in SELF:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            self.checks += 1
+            for needle, key in needles.items():
+                if needle in text:
+                    self.fail(f"TRACKED {f} contains your private "
+                              f"{key!r} value from profile.yaml: {needle[:48]!r}")
+
     # ------------------------------------------------------------------ #
     def run(self) -> int:
         print("=" * 70)
         print("privacy audit")
         print("=" * 70)
         for step in (self.scan_tracked, self.scan_history, self.check_ignored,
-                     self.check_artifacts, self.check_templates):
+                     self.check_artifacts, self.check_templates,
+                     self.check_profile_values_absent):
             step()
         print()
         print("=" * 70)

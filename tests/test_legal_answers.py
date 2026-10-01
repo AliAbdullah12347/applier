@@ -87,7 +87,7 @@ def bank(tmp_path):
         "identity": {"full_name": "Test User", "first_name": "Test", "last_name": "User",
                      "email": "t@example.com", "date_of_birth": "1900-01-01"},
         "work_authorization": {
-            "citizenship": "Elbonia", "us_citizen": False, "visa_status": "F-1 student",
+            "citizenship": "Elbonia", "us_citizen": False, "visa_status": "Z-9 student",
             "answers": {
                 "authorized_now_us": "Yes",
                 "authorized_now_uk": "No",
@@ -99,7 +99,7 @@ def bank(tmp_path):
                 "non_us_qualifier": "I would need the appropriate permit.",
             },
         },
-        "education": [{"degree": "Bachelor of Arts", "expected_graduation": "2028-05"}],
+        "education": [{"degree": "Bachelor of Arts", "expected_graduation": "2099-05"}],
     }, "test-profile")
     settings = Config({"apply": {"universal_filler": {"confidence_threshold": 0.8}},
                        "meta": {"default_work_country": "US"}}, "test-settings")
@@ -114,7 +114,7 @@ def bank(tmp_path):
     ("Do you have the right to work in Singapore?", "No"),
     ("Are you a U.S. citizen?", "No"),
     ("What is your country of citizenship?", "Elbonia"),
-    ("What is your current visa status?", "F-1 student"),
+    ("What is your current visa status?", "Z-9 student"),
     ("Do you hold a security clearance?", "No"),
     ("What is your date of birth?", "1900-01-01"),
 ])

@@ -128,7 +128,7 @@ discovery:
 # SEARCH DEFINITION — which roles to look for. Edit freely.
 # ----------------------------------------------------------------------------
 search:
-  seasons: ["Summer 2027", "Summer 2028"]
+  seasons: ["Summer 2027", "Summer 2028"]   # the cycles you are targeting
   role_kinds: ["internship"]        # add "new_grad" / "full_time" when the time comes
 
   titles_include:
@@ -186,7 +186,10 @@ search:
 # zeroes the score; it is never a weighted term. These save the most time.
 # ----------------------------------------------------------------------------
 gates:
-  graduation_date: "2028-05"
+  # Graduation date is read from config/profile.yaml (education[0].
+  # expected_graduation) -- it is a personal detail and belongs in the file
+  # that is not published. Set `graduation_date: "YYYY-MM"` here only if you
+  # want to override it.
 
   # Auto-reject: roles the applicant can categorically never win.
   hard_reject_phrases:
