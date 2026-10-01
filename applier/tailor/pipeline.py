@@ -152,9 +152,16 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
             continue
 
         contact = [ident.get("email", ""), ident.get("phone", "")]
+        # Numbers the template renders from the profile rather than the bank.
+        prof_nums: list[str] = []
+        for e in education:
+            prof_nums += [str(e.get("gpa", "")), str(e.get("expected_graduation", ""))]
+        for key in ("linkedin", "github", "website"):
+            prof_nums.append(str(ident.get(key, "")))
         keywords = _claimed_keywords(bank, sel)
         report = verify_pdf(out_pdf, expect_keywords=keywords, contact=contact,
-                            claims_used=sel.claims_used, settings=settings)
+                            claims_used=sel.claims_used, settings=settings,
+                            profile_numerals=prof_nums)
 
         pages_ok = not any("page count" in f for f in report.failures)
         if report.ok:
@@ -165,10 +172,14 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
             (artifact / "resume.extracted.txt").write_text(report.extracted, encoding="utf-8")
             return out_pdf, report, sel
 
+        # Record the reason BEFORE deciding whether to retry. Breaking out
+        # first left `last_err` as None, so a non-length verification failure
+        # raised "failed verification after 5 attempts: None" and threw the
+        # diagnosis away — the one piece of information needed to fix it.
+        last_err = TailorError(str(report))
         if pages_ok:
             # A non-length failure will not be fixed by tightening spacing.
             break
-        last_err = TailorError(str(report))
 
     if settings.get("tailor.verify.fail_action", "delete") == "delete" and out_pdf.exists():
         out_pdf.unlink()

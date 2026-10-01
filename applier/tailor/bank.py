@@ -23,6 +23,8 @@ from typing import Any
 
 import yaml
 
+from .master import RENDERABLE_SECTIONS, is_literal_numeral
+
 SLOT_RE = re.compile(r"\{\{\s*C\.([A-Za-z0-9_.]+)\s*\}\}")
 # Bare numerals that must come from claims instead. Ignores things like "8-arc"
 # that are part of a name, and ordinals inside words.
@@ -133,26 +135,52 @@ class Bank:
     def lint(self) -> list[str]:
         """Structural problems that would let an untrue claim through."""
         problems: list[str] = []
+        # An atom in a section no template renders is content that imported
+        # cleanly, linted cleanly, and will never reach a page. Reporting it is
+        # the difference between a typo you fix in ten seconds and a bullet you
+        # believe is on your resume for a month.
         for a in self.atoms:
+            if a.section not in RENDERABLE_SECTIONS:
+                problems.append(
+                    f"{a.id}: section {a.section!r} is not rendered by any resume "
+                    f"template, so this bullet can never appear. Use one of: "
+                    f"{', '.join(sorted(RENDERABLE_SECTIONS))}")
             if not a.phrasings:
                 problems.append(f"{a.id}: no phrasings")
             for size, text in a.phrasings.items():
                 stripped = SLOT_RE.sub("", text)
                 for m in BARE_NUMERAL_RE.finditer(stripped):
-                    tok = m.group(0).strip()
+                    # `[\d,.]*` swallows a sentence-ending full stop, so
+                    # "...to under 2." yielded the token "2." — which then
+                    # failed the [1-5] skip below that the importer applies to
+                    # "2", and lint demanded a claim the importer deliberately
+                    # refuses to mint. The bank became unrenderable with no
+                    # remedy but rewording. Trailing punctuation is not part of
+                    # the number.
+                    tok = m.group(0).strip().rstrip(".,;:")
                     if not tok:
                         continue
                     # These are not measurements and must stay literal, or the
                     # ledger fills with noise and the real check gets ignored:
                     #   years (2026), trivial counts (1-5, as in "3D", "one of 4"),
                     #   and digits glued to a letter (3D, v5.3, C4).
-                    tail = stripped[m.end():m.end() + 1]
-                    if re.fullmatch(r"(19|20)\d{2}", tok):
-                        continue
-                    if re.fullmatch(r"[1-5]", tok):
+                    # The "glued to a letter" exemption is for 3D, C4, v5.3 —
+                    # a digit that is part of a name. But the pattern also
+                    # consumes trailing whitespace, so `m.end()` landed past
+                    # the space and "7500 accounts" looked glued too. That
+                    # exempted almost every real measurement, which is the
+                    # exact thing this check exists to catch. The tail must be
+                    # the character immediately after the numeral.
+                    end = m.start() + len(m.group(0).rstrip())
+                    tail = stripped[end:end + 1]
+                    # Years, trivial counts and version numbers -- the SAME
+                    # rule the importer applies when deciding not to mint a
+                    # claim. Keeping them in one function is what stops lint
+                    # demanding a claim the importer refuses to create.
+                    if is_literal_numeral(tok, stripped[max(0, m.start() - 24):m.start()]):
                         continue
                     if tail.isalpha():
-                        continue
+                        continue        # digits glued to a letter: 3D, C4
                     problems.append(
                         f"{a.id}.{size}: bare numeral {tok!r} — move it into claims.yaml")
                 try:
@@ -206,7 +234,14 @@ class Bank:
         `max_per_group` stops one role with twelve bullets from eating the page.
         """
         jd = (jd_text or "").lower()
-        jd_tokens = set(re.findall(r"[a-z][a-z0-9+#.]{1,}", jd))
+        # The dot is in the class so "node.js" and "three.js" survive as one
+        # token — but that also swallows a sentence-ending full stop, so
+        # "we use gRPC." tokenised to "grpc." and matched no tag at all. Any
+        # technology named at the end of a sentence was invisible to both
+        # relevance scoring and gap detection. Strip the dots at the edges and
+        # keep the ones inside.
+        jd_tokens = {t.strip(".") for t in re.findall(r"[a-z][a-z0-9+#.]{1,}", jd)}
+        jd_tokens.discard("")
 
         scored = [(self.relevance(a, jd, jd_tokens, family), a) for a in self.atoms]
         scored.sort(key=lambda p: -p[0])
@@ -272,12 +307,47 @@ class Bank:
     def _gaps(self, jd_tokens: set[str]) -> list[str]:
         have = {t for a in self.atoms for t in a.tags}
         have |= {s.lower() for group in self.skills.values() for s in group}
+        # A curated vocabulary, not every token in the posting: "collaborate"
+        # and "fast-paced" are not gaps, and reporting them would bury the four
+        # that matter. The trade-off is that an empty result means "nothing from
+        # this list is missing", not "no gaps at all".
+        #
+        # Kept deliberately wide across the three target areas, because this
+        # list is the whole of the "what should I build next" signal — a name
+        # missing from it is a gap the system structurally cannot report.
         interesting = {
-            "kubernetes", "terraform", "rust", "go", "golang", "scala", "kafka",
-            "spark", "airflow", "graphql", "redis", "aws", "gcp", "azure",
+            # languages
+            "rust", "go", "golang", "scala", "kotlin", "swift", "ruby", "php",
+            "elixir", "haskell", "matlab", "julia", "perl", "lua", "ocaml",
+            "clojure", "erlang", "fortran", "assembly", "verilog", "vhdl",
+            # infrastructure and platform
+            "kubernetes", "terraform", "ansible", "helm", "docker", "nomad",
+            "aws", "gcp", "azure", "lambda", "serverless", "cloudformation",
+            "prometheus", "grafana", "datadog", "opentelemetry", "envoy",
+            "nginx", "bazel", "ci/cd", "jenkins", "argo",
+            # data
+            "kafka", "spark", "flink", "airflow", "dbt", "snowflake",
+            "databricks", "clickhouse", "cassandra", "elasticsearch", "redis",
+            "mongodb", "dynamodb", "bigquery", "hadoop", "parquet", "duckdb",
+            # ml and ai
             "tensorflow", "jax", "cuda", "triton", "vllm", "ray", "mlops",
-            "kotlin", "swift", "ruby", "php", "elixir", "haskell", "matlab",
-            "pentest", "fuzzing", "reverse", "malware", "siem", "soc",
+            "onnx", "tensorrt", "huggingface", "langchain", "rag", "embeddings",
+            "vector", "pinecone", "weaviate", "faiss", "quantization",
+            "distillation", "finetuning", "lora", "rlhf", "diffusion",
+            "transformers", "reinforcement", "bayesian", "causal",
+            # security
+            "pentest", "pentesting", "fuzzing", "reverse", "malware", "siem",
+            "soc", "owasp", "burp", "metasploit", "wireshark", "nmap", "ghidra",
+            "ida", "exploit", "cryptography", "pki", "zerotrust", "threat",
+            "forensics", "incident", "vulnerability", "appsec", "devsecoops",
+            "devsecops", "sast", "dast", "fuzzer", "sandboxing",
+            # quant and numerics
+            "quantlib", "numba", "cython", "eigen", "blas", "lapack", "mpi",
+            "openmp", "simd", "montecarlo", "stochastic", "timeseries",
+            "kdb", "q", "optiver", "arbitrage",
+            # web and api
+            "graphql", "grpc", "protobuf", "websocket", "oauth", "webassembly",
+            "wasm", "svelte", "vue", "angular", "nextjs", "tailwind",
         }
         return sorted((jd_tokens & interesting) - have)
 

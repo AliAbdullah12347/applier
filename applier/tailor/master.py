@@ -57,14 +57,52 @@ BULLET_RE = re.compile(r"^[-*]\s+(.+?)\s*$")
 VARIANT_RE = re.compile(r"^\s+(~{1,2})\s*(.+?)\s*$")
 PIN_RE = re.compile(r"\s*\[pin\]\s*$", re.I)
 
+# Only four sections are rendered by a resume template, plus skills. A heading
+# that maps to none of them parses fine, imports fine, lints clean — and then
+# never appears on any resume. Silent content loss is the worst failure this
+# file can produce, so the alias list is generous and anything still unmatched
+# is reported rather than dropped (see `unknown_sections` in build_bank, and
+# the renderable-section check in Bank.lint).
+RENDERABLE_SECTIONS = {"experience", "projects", "leadership", "education"}
+
 KNOWN_SECTIONS = {
     "experience": "experience",
+    "work experience": "experience",
+    "professional experience": "experience",
+    "employment": "experience",
+    "employment history": "experience",
+    "research experience": "experience",
+
     "projects": "projects",
+    "personal projects": "projects",
+    "selected projects": "projects",
+    "technical projects": "projects",
+    "research": "projects",
+    "publications": "projects",
+    "papers": "projects",
+
     "leadership": "leadership",
+    "leadership & activities": "leadership",
+    "activities": "leadership",
+    "involvement": "leadership",
+    "extracurriculars": "leadership",
+    "service": "leadership",
+
     "education": "education",
     "honors": "education",
+    "honours": "education",
     "awards": "education",
+    "honors & awards": "education",
+    "honours & awards": "education",
+    "awards & honors": "education",
+    "awards and honors": "education",
+    "honors and awards": "education",
+
     "skills": "skills",
+    "technical skills": "skills",
+    "skills & tools": "skills",
+    "skills and tools": "skills",
+    "tools": "skills",
 }
 
 # Numerals that are part of a name rather than a measurement. Left alone.
@@ -84,6 +122,37 @@ NUMERAL_RE = re.compile(
     r"(?:\s*(?:%|x\b|\+|!))?"             # optional suffix: % x + !
     r"(?:\s+(?:" + UNITS + r"))?"         # optional unit word
     r")")
+
+
+def is_literal_numeral(tok: str, before: str = "") -> bool:
+    """Whether a numeral legitimately stays literal instead of becoming a claim.
+
+    The importer and `Bank.lint` must agree on this exactly, or the bank
+    becomes unrenderable with no remedy: the importer declines to mint a claim
+    for a numeral, and lint then demands one for the literal it left behind.
+    That happened twice — on "under 2." and on "Unreal Engine 5.3" — so the
+    rule lives here once and both callers use it.
+
+    `before` is the text immediately preceding the numeral, which is what
+    distinguishes a version number from a measurement.
+    """
+    t = tok.strip().rstrip(".,;:")
+    if not t:
+        return True
+    if NUMERAL_SKIP.match(t.replace(",", "")):
+        return True
+    # A version number is part of a product's name, not a measurement, so
+    # "Unreal Engine 5.3" and "Python 3.11" stay literal rather than filling
+    # the ledger with figures nobody could defend in an interview.
+    #
+    # The dot is required, and that is deliberate: a bare "15" after a word
+    # cannot be told apart from "served 15 customers", so relaxing this would
+    # exempt nearly every real measurement. A bare major version of 1-5 is
+    # already covered by the trivial-count rule above; anything higher simply
+    # becomes a claim, which renders correctly either way.
+    if re.fullmatch(r"\d+\.\d+", t) and re.search(r"[A-Za-z][A-Za-z.]*\s*$", before.rstrip()):
+        return True
+    return False
 
 
 class MasterError(RuntimeError):
@@ -114,6 +183,7 @@ def parse(path: Path) -> tuple[list[MasterEntry], dict[str, list[str]]]:
 
     entries: list[MasterEntry] = []
     skills: dict[str, list[str]] = {}
+    unknown_sections: set[str] = set()
     section = ""
     cur: MasterEntry | None = None
     in_skills = False
@@ -127,6 +197,8 @@ def parse(path: Path) -> tuple[list[MasterEntry], dict[str, list[str]]]:
         if m:
             name = m.group(1).strip().lower()
             section = KNOWN_SECTIONS.get(name, name)
+            if section not in KNOWN_SECTIONS.values():
+                unknown_sections.add(m.group(1).strip())
             in_skills = section == "skills"
             cur = None
             continue
@@ -178,6 +250,13 @@ def parse(path: Path) -> tuple[list[MasterEntry], dict[str, list[str]]]:
                 cur.meta[key] = val
             continue
 
+    if unknown_sections:
+        # Printed, not raised: the rest of the file is still worth importing,
+        # and Bank.lint will refuse to render the affected atoms anyway.
+        names = ", ".join(sorted(unknown_sections))
+        print(f"  [master] WARNING: unrecognised section heading(s): {names}")
+        print("           Content under these will not appear on any resume. "
+              "Use Experience, Projects, Leadership, Education or Skills.")
     return entries, skills
 
 
@@ -201,19 +280,37 @@ def _shape(value: str) -> str:
 
 
 
+# Every character `_shape` keeps must map to something distinct here, or two
+# different numbers can land on one name. `!` was missing, which is how "8" and
+# "8!" in the same bullet both became `n_8` — the second overwrote the first,
+# and "8-arc classification" rendered as "8!-arc classification" on a finished
+# PDF. Adding a suffix to NUMERAL_RE means adding it here too.
+_NAME_CHARS = {
+    "%": "pct", "+": "plus", "$": "usd", "!": "fact",
+    ".": "p", "-": "_to_",
+}
+
+
 def _claim_name(value: str) -> str:
-    """A stable claim name derived from the value itself.
+    """A stable claim name derived from the value's *identity*.
 
     Sequential names (n1, n2, ...) were a latent bug: the counter reset for each
     bullet, so two bullets in the same entry both minted "n1" and the second
     silently overwrote the first -- binding one bullet's prose to another
     bullet's number. A value-derived name cannot collide unless the values are
     genuinely identical, in which case sharing a claim is correct.
+
+    The name is derived from `_shape`, not from the raw value, so that two
+    numbers collide on a name if and only if they collide on identity. Keeping
+    those two definitions in step is the whole point: a name collision binds
+    unrelated facts together, and that is invisible until it reaches a PDF.
     """
-    v = value.strip().lower()
-    v = v.replace("%", "pct").replace("+", "plus").replace("$", "usd")
-    v = re.sub(r"[^a-z0-9]+", "_", v).strip("_")
-    return ("n_" + v)[:40] or "n_value"
+    shape = _shape(value)
+    out = []
+    for ch in shape:
+        out.append(_NAME_CHARS.get(ch, ch if ch.isalnum() else "_"))
+    v = re.sub(r"_+", "_", "".join(out)).strip("_")
+    return ("n_" + v)[:40] if v else "n_value"
 
 
 def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
@@ -256,13 +353,8 @@ def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
 
     def repl(m: re.Match) -> str:
         tok = m.group(1).strip()
-        if NUMERAL_SKIP.match(tok.replace(",", "")):
-            return tok
-        # A version number is part of a product's name, not a measurement.
-        # "Unreal Engine 5.3" and "Next.js 15" should stay literal rather than
-        # filling the ledger with figures nobody could "defend".
-        before = text[max(0, m.start() - 24):m.start()].rstrip()
-        if re.fullmatch(r"\d+\.\d+", tok) and re.search(r"[A-Za-z][A-Za-z.]*\s*$", before):
+        # One shared rule with Bank.lint -- see is_literal_numeral.
+        if is_literal_numeral(tok, text[max(0, m.start() - 24):m.start()]):
             return tok
         key = lookup(tok)
         if key:

@@ -130,7 +130,8 @@ def page_count(pdf: Path) -> int:
 
 
 def verify_pdf(pdf: Path, *, expect_keywords: list[str], contact: list[str],
-               claims_used: dict[str, str], settings) -> VerifyReport:
+               claims_used: dict[str, str], settings,
+               profile_numerals: list[str] | None = None) -> VerifyReport:
     checks = settings.get("tailor.verify.checks", {})
     text = extract_text(pdf)
     flat = re.sub(r"\s+", " ", text)
@@ -176,18 +177,32 @@ def verify_pdf(pdf: Path, *, expect_keywords: list[str], contact: list[str],
     # "$5,000" split by the tokeniser produce warnings that train you to ignore
     # the check entirely, which defeats its purpose.
     if checks.get("every_numeral_traces_to_claim", True):
+        # Profile-sourced figures -- GPA, its scale, the graduation date -- are
+        # typeset from config/profile.yaml, not from the claims ledger, so they
+        # have no claim to trace to. Flagging them produced a permanent warning
+        # on every single resume ("numeral '00' not traced", from GPA 3.98/4.00),
+        # and a check that always warns is a check people stop reading.
         allowed: set[str] = set()
-        for v in list(claims_used.values()) + list(contact):
+        for v in (list(claims_used.values()) + list(contact)
+                  + list(profile_numerals or [])):
             raw = str(v)
             allowed.update(re.findall(r"\d[\d,.]*", raw))
             allowed.update(re.findall(r"\d+", raw))          # sub-tokens: 5,000 -> 5, 000
             allowed.add(re.sub(r"[^\d]", "", raw))            # digits-only form
-        for tok in re.findall(r"(?<![\w/])\d[\d,.]*(?![\w/])", flat):
-            if tok in allowed:
+        from .master import is_literal_numeral
+
+        for m in re.finditer(r"(?<![\w/])\d[\d,.]*(?![\w/])", flat):
+            raw = m.group(0)
+            # Third place this bit me: `[\d,.]*` takes the sentence's comma or
+            # full stop with it, so "5," and "5.3," missed every exemption
+            # below and warned on every render. A check that always warns is a
+            # check nobody reads, which is worse than not having it.
+            tok = raw.rstrip(".,;:")
+            if not tok or tok in allowed:
                 continue
-            if re.fullmatch(r"(19|20)\d{2}", tok):      # years
-                continue
-            if tok in {"1", "2", "3", "4", "5"}:         # list/GPA scale noise
+            # The same rule the importer and lint use: years, trivial counts
+            # and version numbers are legitimately literal.
+            if is_literal_numeral(tok, flat[max(0, m.start() - 24):m.start()]):
                 continue
             if re.sub(r"[^\d]", "", tok) in allowed:     # same digits, different punctuation
                 continue
