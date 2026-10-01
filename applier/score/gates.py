@@ -57,8 +57,16 @@ def check_gates(job: dict[str, Any], settings: Config, profile: Config,
         if _norm(prog) in title:
             return GateResult(False, f"{prog} is first/second-year only", "silent")
 
-    # 3. graduation window, when the posting states one
-    grad = str(g.get("graduation_date", ""))
+    # 3. graduation window, when the posting states one.
+    #
+    # Read from the profile, which is the one place a graduation date belongs.
+    # It used to be duplicated into settings.yaml as `gates.graduation_date`,
+    # which was both a second source of truth that could disagree with the
+    # first, and a real personal detail sitting in the file this project
+    # publishes. The settings key is still honoured as a fallback so an
+    # existing configuration keeps working, but the profile wins.
+    edu = (profile.get("education", []) or [{}])[0]
+    grad = str(edu.get("expected_graduation") or g.get("graduation_date", "") or "")
     if grad:
         window = _graduation_window(blob)
         if window and not _grad_in_window(grad, window):
