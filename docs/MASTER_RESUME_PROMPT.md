@@ -32,6 +32,58 @@ Targeting **<SEASON AND YEAR>** internships in <TARGET_AREAS>, and
 
 ---
 
+# Material that is not on my resume yet
+
+<!-- Paste anything newer than the attached resume here: a role you just
+     started, a project you just shipped, research in progress, a competition
+     you placed in. This section is primary source material and should win over
+     the PDF wherever they disagree.
+
+     Three kinds of entry mislead very easily. If any of yours is one of these,
+     keep the matching guardrail — each has been load-bearing in practice. -->
+
+## <Thing one>
+
+<The facts. Be concrete and be boring: what the system does, what the role
+involves, what the dataset is. Save the judgement for the bullets.>
+
+---
+
+### Guardrails worth copying
+
+**A team project.** State who did what, or say that you do not know. If a deck
+or repo does not record ownership, tell the model:
+
+> This was a team of N and the sources do not record who built what. Do not
+> assign any of it to me. Write the entry from project-level facts, then ask me
+> component by component which parts were mine. Until I answer, phrase bullets
+> at team level and mark each `TODO: confirm my ownership`.
+
+A win or a shipped product is a strong credential right up until an interviewer
+asks which part you wrote and the answer does not match the resume.
+
+**Research in progress.** A proposal's hypotheses and expected results are
+predictions. Tell the model:
+
+> Do not write a bullet that states an expected result as one I obtained. Build
+> the entry from what is true now: the question, the dataset and its real
+> dimensions, the methods being implemented, the design decisions. Ask me what
+> has actually run.
+
+The question, the data and the method are already a strong entry with no
+findings in it at all.
+
+**A role you have given no numbers for.** Tell the model:
+
+> I have given you no metrics for this. Do not supply any. Write the bullets
+> without them and ask me for the specific figures you want; I can look up real
+> ones.
+
+An invented "resolved 200+ tickets" is the exact failure this file exists to
+prevent, and it is the easiest one to produce by accident.
+
+---
+
 # Output format — exact, and non-negotiable
 
 The file is parsed by a strict importer. Deviations are silently dropped or
