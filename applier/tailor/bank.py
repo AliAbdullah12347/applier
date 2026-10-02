@@ -30,6 +30,14 @@ SLOT_RE = re.compile(r"\{\{\s*C\.([A-Za-z0-9_.]+)\s*\}\}")
 # that are part of a name, and ordinals inside words.
 BARE_NUMERAL_RE = re.compile(r"(?<![\w.\-])\d[\d,.]*\s*(?:%|x\b|\+)?")
 
+# Tags beyond this count no longer dilute an atom's relevance. Eight is plenty
+# to say what a bullet is about; past that the author is being thorough rather
+# than vague, and should not be scored down for it.
+TAG_DENOM_CAP = 8
+
+# Bonus for an entry declaring itself the lead for this job family.
+LEAD_FOR_BONUS = 0.45
+
 
 class BankError(RuntimeError):
     pass
@@ -202,9 +210,26 @@ class Bank:
     # ------------------------------------------------------------------ #
     def relevance(self, atom: Atom, jd: str, jd_tokens: set[str], family: str) -> float:
         hits = sum(1 for t in atom.tags if t.replace("_", " ") in jd or t in jd_tokens)
-        rel = hits / max(2.0, len(atom.tags) or 1)
+
+        # Dividing by the full tag count punished thorough tagging: an atom with
+        # 12 well-chosen tags and 3 hits scored 0.25, losing to one with 3 tags
+        # and 2 hits at 0.67. That is backwards, and it contradicted the advice
+        # to tag generously -- the better-described entry ranked lower for the
+        # same evidence.
+        #
+        # The denominator is meant to express "how specific is this atom", not
+        # "how many words did the author type", so it is capped. Past the cap,
+        # extra tags are free: they can win matches but can no longer dilute.
+        denom = max(2.0, float(min(len(atom.tags) or 1, TAG_DENOM_CAP)))
+        rel = hits / denom
         if family in atom.lead_for:
-            rel += 0.75
+            # A thumb on the scale, not the whole scale. At 0.75 this term
+            # swamped everything: an entry hitting "agents" and "react" on a
+            # job asking for agents and React scored 0.25, while an unrelated
+            # entry carrying lead_for scored 1.40 and took four slots. The
+            # declared lead should break ties between comparable entries, not
+            # overrule what the posting actually asks for.
+            rel += LEAD_FOR_BONUS
         if atom.section == "experience":
             rel += 0.15
         return rel
@@ -362,21 +387,78 @@ class Bank:
         return sorted((jd_tokens & interesting) - have)
 
 
+FAMILY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("security", ("security", "appsec", "infosec", "penetration test", "pentest",
+                  "vulnerability", "red team", "threat model", "malware", "forensics")),
+    ("quant",    ("quantitative", "quant ", "trading", "trader", "market making",
+                  "systematic", "derivative", "hedge fund", "proprietary trading")),
+    # " ai " is padded on both sides so it cannot match inside "said" or
+    # "maintain"; the title and description are themselves padded before
+    # matching so a title *ending* in "- AI Infrastructure" still hits.
+    ("ai_ml",    ("machine learning", "ml engineer", "deep learning", "llm",
+                  "nlp", "research scientist", "computer vision", "pytorch",
+                  "tensorflow", "neural network", " ai ", "artificial intelligence",
+                  "generative ai", "genai", "ai/ml", " ml ")),
+    ("graphics", ("graphics", "rendering", "unreal", "unity", "shader", "vfx",
+                  "game engine", "real-time 3d")),
+    ("research", ("research assistant", "phd", "publication", "laboratory",
+                  "dissertation", "peer-reviewed")),
+]
+
+# How many DISTINCT keywords a job description must contain before it may claim
+# a specialist family on its own.
+DESCRIPTION_FAMILY_THRESHOLD = 2
+
+# A title that names a general engineering role and nothing more. The company's
+# domain is not the role's discipline: an agentic-AI startup hiring a
+# "Software Engineering Intern" to write Python and React wants a software
+# engineer, and its description will still be dense with "ML" and "AI" because
+# that is what the company sells. Reading the description there produces a
+# machine-learning resume for a backend job.
+GENERIC_TITLE_MARKERS = (
+    "software engineer", "software engineering", "software developer",
+    "software development", "swe ", "full stack", "full-stack", "fullstack",
+    "backend", "back-end", "frontend", "front-end", "web developer",
+    "web development", "platform engineer", "product engineer",
+)
+
+
 def job_family(job: dict) -> str:
-    """Which experience should lead, from the job text."""
-    blob = f"{job.get('title','')} {job.get('description','')}".lower()
-    if any(k in blob for k in ("security", "appsec", "infosec", "penetration",
-                               "vulnerability", "red team", "threat")):
-        return "security"
-    if any(k in blob for k in ("quant", "trading", "trader", "market making",
-                               "systematic", "derivative")):
-        return "quant"
-    if any(k in blob for k in ("machine learning", "ml engineer", " ai ", "deep learning",
-                               "llm", "nlp", "research scientist", "computer vision")):
-        return "ai_ml"
-    if any(k in blob for k in ("graphics", "rendering", "unreal", "unity", "game",
-                               "shader", "3d", "vfx")):
-        return "graphics"
-    if any(k in blob for k in ("research assistant", "phd", "publication", "laboratory")):
-        return "research"
-    return "default"
+    """Which experience should lead, from the job text.
+
+    The title decides when it can, because the title is what the job *is*.
+    The description only gets a vote when the title is generic, and then it
+    needs more than one distinct signal.
+
+    Both rules come from the same real posting: a startup titled "Software
+    Engineering Intern" that wanted Python and React described its customers
+    as "ML researchers, quants, and data scientists". That lone incidental
+    "quants" matched, and the candidate's resume came out led by competition
+    mathematics and a crypto-arbitrage project instead of his agentic Python
+    system — for a backend job that was asking for exactly that system.
+
+    A misread family is not a cosmetic problem: it silently sends the wrong
+    resume, and nothing downstream can detect it.
+    """
+    # Padded so a keyword carrying its own word boundaries, like " ai ", still
+    # matches at the very start or end of the text.
+    title = f" {str(job.get('title', '')).lower()} "
+    desc = f" {str(job.get('description', '')).lower()} "
+
+    for family, keywords in FAMILY_KEYWORDS:
+        if any(k in title for k in keywords):
+            return family
+
+    # A plain engineering title with no specialist qualifier settles it. The
+    # description does not get a vote, because at a specialist company it is
+    # describing the product rather than the job.
+    if any(m in title for m in GENERIC_TITLE_MARKERS):
+        return "default"
+
+    best, best_hits = "default", 0
+    for family, keywords in FAMILY_KEYWORDS:
+        hits = sum(1 for k in keywords if k in desc)
+        if hits > best_hits:
+            best, best_hits = family, hits
+
+    return best if best_hits >= DESCRIPTION_FAMILY_THRESHOLD else "default"

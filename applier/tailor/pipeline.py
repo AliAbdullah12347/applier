@@ -117,6 +117,7 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
     ladder = settings.get("tailor.autofit.density_ladder", [1.0, 0.96, 0.92, 0.88, 0.84])
     max_compiles = int(settings.get("tailor.autofit.max_compiles", 3))
     font_pt = int(settings.get("tailor.autofit.font_pt_floor", 10))
+    budget_start = int(settings.get("tailor.autofit.line_budget_start", 48))
     margin = float(settings.get("tailor.autofit.margin_in_floor", 0.45))
 
     out_pdf = artifact / "resume.pdf"
@@ -126,7 +127,7 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
         rung = ladder[min(attempt, len(ladder) - 1)]
         # Each attempt drops real content, not just whitespace. Tightening
         # spacing alone cannot take a 2-page resume to 1 page.
-        budget = int(38 * rung) - (attempt * 5)
+        budget = int(budget_start * rung) - (attempt * 5)
         sel = bank.select(jd, family=family, line_budget=budget)
         sections = _group_selection(sel, bank)
 

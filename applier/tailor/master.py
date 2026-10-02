@@ -112,6 +112,13 @@ NUMERAL_SKIP = re.compile(
 )
 # Capture the unit alongside the number so "30 FPS" stays one claim rather
 # than a bare "30" that could mean anything.
+#
+# The word boundary after the unit group is load-bearing: without it "secs?"
+# matched the
+# "sec" inside "6 sections", minting a claim literally valued "6 sec". It
+# round-tripped by accident (slot + "tions"), but the claims ledger exists to
+# be reviewed by a human, and "could I defend '6 sec'?" is not a question
+# anyone can answer.
 UNITS = (r"FPS|fps|days?|hours?|minutes?|mins?|seconds?|secs?|weeks?|months?|years?"
          r"|students?|attendees?|tickets?|members?|languages?|applicants?|courses?"
          r"|commits?|contributors?|venues?|events?|organizations?|organisations?")
@@ -120,7 +127,7 @@ NUMERAL_RE = re.compile(
     r"~?\$?\d[\d,]*(?:\.\d+)?"          # the number
     r"(?:\s*[-\u2013]\s*\d[\d,]*(?:\.\d+)?)?"   # optional range: 70-200
     r"(?:\s*(?:%|x\b|\+|!))?"             # optional suffix: % x + !
-    r"(?:\s+(?:" + UNITS + r"))?"         # optional unit word
+    r"(?:\s+(?:" + UNITS + r")\b)?"        # optional unit word, whole-word only
     r")")
 
 
@@ -313,13 +320,18 @@ def _claim_name(value: str) -> str:
     return ("n_" + v)[:40] if v else "n_value"
 
 
-def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
+def extract_numbers(text: str, prefix: str, existing: dict,
+                    retired_out: list | None = None) -> tuple[str, dict]:
     """Replace inline numerals with claim slots, minting claims as needed.
 
     A number already present in the ledger keeps its existing key and status —
     so anything you retired stays retired across re-imports. That is the whole
     point: the importer must never quietly resurrect a metric you removed.
+
+    Returns the rewritten text, the newly minted claims, and any RETIRED claims
+    the text still refers to. The caller refuses on the third.
     """
+    retired_hits: list[tuple[str, str]] = []
     minted: dict[str, dict] = {}
     value_to_key: dict[str, str] = {}
     digits_to_keys: dict[str, set[str]] = {}
@@ -361,9 +373,18 @@ def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
             sect, name = key.split(".", 1)
             claim = (existing.get(sect) or {}).get(name) or {}
             if str(claim.get("status")) == "RETIRED":
-                # The number is gone on purpose. Drop it from the phrasing
-                # rather than reintroducing it.
-                return ""
+                # The number is gone on purpose -- but deleting it from the
+                # sentence is not a safe default, because the sentence is
+                # usually ABOUT the number. "Increased build stability by 30%
+                # by resolving C# errors" silently became "Increased build
+                # stability by  by resolving C# errors", and lint called it
+                # clean, so mangled prose would have been typeset onto a real
+                # application.
+                #
+                # Record it and let the caller refuse. The bullet has to be
+                # rewritten by a human; there is no correct automatic repair.
+                retired_hits.append((tok, key))
+                return tok
             return "{{C." + key + "}}"
         name = _claim_name(tok)
         minted.setdefault(prefix, {})[name] = {
@@ -375,7 +396,10 @@ def extract_numbers(text: str, prefix: str, existing: dict) -> tuple[str, dict]:
         digits_to_keys.setdefault(_shape(tok), set()).add(f"{prefix}.{name}")
         return "{{C." + f"{prefix}.{name}" + "}}"
 
-    return NUMERAL_RE.sub(repl, text), minted
+    out = NUMERAL_RE.sub(repl, text)
+    if retired_out is not None:
+        retired_out.extend(retired_hits)
+    return out, minted
 
 
 def _merge(dst: dict, src: dict) -> dict:
@@ -433,6 +457,7 @@ def build_bank(master_path: Path, bank_dir: Path, *, write: bool = True) -> dict
 
     atoms: list[dict] = []
     roles: dict[str, dict] = {}
+    all_retired_hits: dict[str, list] = {}
     new_claims: dict = {}
     pinned_count = 0
 
@@ -466,19 +491,24 @@ def build_bank(master_path: Path, bank_dir: Path, *, write: bool = True) -> dict
             ledger = yaml.safe_load(yaml.safe_dump(existing_claims)) if existing_claims else {}
             _merge(ledger, new_claims)
 
-            long_text, minted = extract_numbers(b["text"], prefix, ledger)
+            retired_here: list[tuple[str, str]] = []
+            all_retired_hits.setdefault(e.entry_id, [])
+            long_text, minted = extract_numbers(b["text"], prefix, ledger, retired_here)
             _merge(new_claims, minted)
             _merge(ledger, minted)
+
+            if retired_here:
+                all_retired_hits[e.entry_id].append((b["text"], retired_here))
 
             phrasings = {"long": long_text}
             variants = list(b["variants"])
             if variants:
-                med, m2 = extract_numbers(variants[0], prefix, ledger)
+                med, m2 = extract_numbers(variants[0], prefix, ledger, retired_here)
                 _merge(new_claims, m2)
                 _merge(ledger, m2)
                 phrasings["medium"] = med
             if len(variants) > 1:
-                sh, m3 = extract_numbers(variants[1], prefix, ledger)
+                sh, m3 = extract_numbers(variants[1], prefix, ledger, retired_here)
                 _merge(new_claims, m3)
                 phrasings["short"] = sh
             if "medium" not in phrasings:
@@ -497,6 +527,28 @@ def build_bank(master_path: Path, bank_dir: Path, *, write: bool = True) -> dict
             })
             if b["pinned"] or e.pinned:
                 pinned_count += 1
+
+    # A bullet that still cites a RETIRED metric cannot be repaired
+    # automatically: the sentence is usually *about* the number, so deleting it
+    # leaves "Increased build stability by  by resolving C# errors" — which
+    # linted clean and would have been typeset onto a real application.
+    #
+    # Refuse, and name the bullet. Reinstating a metric is a decision only the
+    # person who withdrew it can make, and it is one line in claims.yaml.
+    if any(hits for hits in all_retired_hits.values()):
+        lines = []
+        for entry_id, hits in all_retired_hits.items():
+            for bullet, refs in hits:
+                vals = ", ".join(sorted({f"{tok!r} ({key})" for tok, key in refs}))
+                lines.append(f"  {entry_id}: {vals}\n      {bullet[:110]}")
+        raise MasterError(
+            "This master resume cites metric(s) you previously RETIRED:\n"
+            + "\n".join(lines)
+            + "\n\n  A retired number is one you decided you could not defend. "
+              "Either rewrite the bullet without it, or, if you have since "
+              "confirmed the figure, change its status in "
+              "config/bank/claims.yaml from RETIRED to verified and re-import."
+        )
 
     merged_claims = yaml.safe_load(yaml.safe_dump(existing_claims)) if existing_claims else {}
     _merge(merged_claims, new_claims)

@@ -252,6 +252,11 @@ tailor:
   autofit:
     enabled: true
     max_compiles: 5
+    # Lines of content to attempt FIRST. The ladder only ever walks down, so
+    # this is a ceiling: start below the page's real capacity and every resume
+    # ships with empty space at the bottom. Measured at 46 on a 10pt/0.55in
+    # layout, so 48 overshoots by one rung on purpose and the ladder settles.
+    line_budget_start: 48
     density_ladder: [1.00, 0.96, 0.92, 0.88, 0.84]   # spacing multipliers
     font_pt_floor: 10
     margin_in_floor: 0.45
