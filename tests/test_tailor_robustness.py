@@ -177,6 +177,48 @@ def test_lint_still_catches_real_untracked_numbers(tmp_path, phrasing, should_fl
 
 
 # --------------------------------------------------------------------------- #
+# job family: the wrong family silently sends the wrong resume
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("title,desc,expected", [
+    # The posting that exposed this. A startup titled "Software Engineering
+    # Intern", asking for Python and React, that described its CUSTOMERS as
+    # "ML researchers, quants, and data scientists". One incidental "quants"
+    # produced a resume led by competition mathematics and crypto arbitrage.
+    ("Software Engineering Intern (Summer 2027)",
+     "We build an agentic research platform. Our users are ML researchers, quants "
+     "and data scientists. Required: strong full-stack or backend engineering, "
+     "especially Python. We are hiring someone with chops in Python or React.",
+     "default"),
+    # A specialist qualifier in the title still wins.
+    ("Software Engineer Intern - AI Infrastructure",
+     "Build infrastructure. We also do rendering and some Unity work.", "ai_ml"),
+    ("Quantitative Trader Intern", "Trading desk.", "quant"),
+    ("Information Security Engineer Intern", "Secure the platform.", "security"),
+    ("Graphics Engineer Intern", "Shaders and rendering.", "graphics"),
+    ("Research Assistant", "Laboratory work toward publication.", "research"),
+    # A generic title plus a product-flavoured description stays generic.
+    ("Backend Engineer Intern",
+     "Our product uses machine learning and deep learning throughout. You will "
+     "write Python services and REST APIs.", "default"),
+    # No title signal at all: the description may decide, with two hits.
+    ("Intern", "You will do threat modelling and vulnerability research.", "security"),
+    ("Intern", "Office administration and scheduling.", "default"),
+])
+def test_job_family_reads_the_role_not_the_company(title, desc, expected):
+    from applier.tailor.bank import job_family
+    got = job_family({"title": title, "description": desc})
+    assert got == expected, f"{title!r} classified {got}, expected {expected}"
+
+
+def test_one_incidental_keyword_cannot_claim_a_family():
+    """The description needs more than a single passing mention."""
+    from applier.tailor.bank import job_family
+    job = {"title": "Operations Intern",
+           "description": "Support the team. We occasionally work with trading desks."}
+    assert job_family(job) == "default"
+
+
+# --------------------------------------------------------------------------- #
 # section headings: content must never vanish quietly
 # --------------------------------------------------------------------------- #
 ENTRY = ("### An Entry\nid: test_entry\ntags: python, testing\n\n"
@@ -277,6 +319,60 @@ def test_an_empty_bank_does_not_lint_clean(tmp_path):
     problems = Bank(tmp_path).lint()
     assert problems, "an empty bank reported no problems"
     assert "empty" in problems[0].lower()
+
+
+def test_a_retired_metric_refuses_instead_of_mangling_the_sentence(tmp_path):
+    """Retiring a metric is how a withdrawn claim stays withdrawn. The
+    importer used to honour that by deleting the numeral from the phrasing —
+    but the sentence is usually *about* the number, so
+
+        "Increased build stability by 30% by resolving C# errors"
+
+    became
+
+        "Increased build stability by  by resolving C# errors"
+
+    and lint returned clean. Mangled prose would have been typeset onto a real
+    application, which is worse than either keeping or dropping the claim.
+    """
+    import yaml
+
+    from applier.tailor.master import MasterError
+
+    (tmp_path / "claims.yaml").write_text(yaml.safe_dump(
+        {"exp_x": {"stability_pct": {"value": "30%", "status": "RETIRED"}}}),
+        encoding="utf-8")
+    m = tmp_path / "master.md"
+    m.write_text("## Experience\n\n### A Role\nid: exp_x\ntags: a\n\n"
+                 "- Increased build stability by 30% by fixing logic errors\n",
+                 encoding="utf-8")
+
+    with pytest.raises(MasterError) as err:
+        build_bank(m, tmp_path, write=True)
+    msg = str(err.value)
+    assert "RETIRED" in msg
+    assert "30%" in msg, "the message must name the offending figure"
+    assert "claims.yaml" in msg, "the message must say how to reinstate it"
+
+
+def test_a_retired_metric_never_silently_reappears(tmp_path):
+    """The other half: it must not come back as a live claim either."""
+    import yaml
+
+    from applier.tailor.master import MasterError
+
+    (tmp_path / "claims.yaml").write_text(yaml.safe_dump(
+        {"exp_x": {"stability_pct": {"value": "30%", "status": "RETIRED"}}}),
+        encoding="utf-8")
+    m = tmp_path / "master.md"
+    m.write_text("## Experience\n\n### A Role\nid: exp_x\ntags: a\n\n"
+                 "- Increased build stability by 30%\n", encoding="utf-8")
+    with pytest.raises(MasterError):
+        build_bank(m, tmp_path, write=True)
+
+    after = yaml.safe_load((tmp_path / "claims.yaml").read_text(encoding="utf-8"))
+    assert after["exp_x"]["stability_pct"]["status"] == "RETIRED", \
+        "the retired claim was overwritten by the import"
 
 
 def test_every_renderable_section_is_reachable_by_some_heading():

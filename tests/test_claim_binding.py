@@ -52,6 +52,30 @@ def test_same_fact_written_differently_is_one_claim(a, b):
     assert _shape(a) == _shape(b)
 
 
+@pytest.mark.parametrize("text,expected", [
+    # The bug: "secs?" matched the "sec" inside "sections", so "6 sections"
+    # minted a claim literally valued "6 sec". It round-tripped by accident —
+    # the slot plus the leftover "tions" rendered correctly — but the claims
+    # ledger exists to be reviewed by a human, and "can I defend '6 sec'?" is
+    # not a question anyone can answer.
+    ("6 sections", ["6"]),
+    ("12 secondary displays", ["12"]),
+    ("4 minutes of footage", ["4 minutes"]),
+    ("8 monthly reports", ["8"]),
+    # Real units must still bind to their number — this is what keeps
+    # "30 students" and "30 FPS" apart.
+    ("30 FPS", ["30 FPS"]),
+    ("3 days", ["3 days"]),
+    ("50 students", ["50 students"]),
+    ("1,000+ applicants", ["1,000+ applicants"]),
+    ("20 minutes", ["20 minutes"]),
+])
+def test_a_unit_must_be_a_whole_word(text, expected):
+    from applier.tailor.master import NUMERAL_RE
+    got = [m.group(1) for m in NUMERAL_RE.finditer(text)]
+    assert got == expected, f"{text!r} captured {got}, expected {expected}"
+
+
 def test_claim_names_are_value_derived_not_positional():
     """Two different values in one entry must never get the same name."""
     assert _claim_name("70%") != _claim_name("200+ students")
@@ -196,10 +220,25 @@ def test_retired_claims_are_not_resurrected_by_reimport(tmp_path):
     (tmp_path / "claims.yaml").write_text(
         yaml.safe_dump(claims, sort_keys=False), encoding="utf-8")
 
-    build_bank(tmp_path / "master_resume.md", tmp_path)
+    # The import now REFUSES rather than quietly editing the number out.
+    #
+    # Deleting it honoured the letter of "never resurrect a retired metric"
+    # and broke the sentence: "reducing manual modeling time by 70%" became
+    # "reducing manual modeling time by ", and lint called that clean. The
+    # bullet exists to report the number, so there is no correct automatic
+    # repair — only a human can decide whether to rewrite it or reinstate the
+    # figure. Refusing is the stronger form of the same guarantee.
+    from applier.tailor.master import MasterError
+
+    with pytest.raises(MasterError) as err:
+        build_bank(tmp_path / "master_resume.md", tmp_path)
+    assert "RETIRED" in str(err.value)
+    assert "70%" in str(err.value), "the refusal must name the figure"
+
     after = yaml.safe_load((tmp_path / "claims.yaml").read_text(encoding="utf-8"))
     assert after[target[0]][target[1]]["status"] == "RETIRED"
 
+    # And the bank on disk is untouched: a refused import changes nothing.
     atoms = yaml.safe_load((tmp_path / "atoms.yaml").read_text(encoding="utf-8"))
     for a in atoms["atoms"]:
         for text in a["phrasings"].values():

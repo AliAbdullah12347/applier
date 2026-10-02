@@ -106,17 +106,32 @@ def compile_pdf(tex_source: str, out_pdf: Path, *, timeout: int = 120) -> Path:
 
 # --------------------------------------------------------------------------- #
 def extract_text(pdf: Path) -> str:
-    """Read the PDF the way an ATS parser would."""
+    """Read the PDF the way an ATS parser would.
+
+    pdfplumber first, pypdf only as a fallback. The order used to be the other
+    way round, and pypdf infers word spacing poorly across a two-column
+    `tabular*` row: a job title and its dates came back joined as
+    "Computational AlgebraMay 2026". poppler and pdfminer both read the same
+    file correctly, so the PDF was fine and the *verifier* had the distorted
+    view — which is the worse failure, because this function is what decides
+    whether a resume is fit to send. A gate that misreads the artifact it is
+    inspecting can fail a good file or pass a broken one.
+
+    pdfplumber is built on pdfminer, which is what several real ATS pipelines
+    use, so this is also closer to the thing being simulated.
+    """
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(pdf)) as doc:
+            text = "\n".join((p.extract_text() or "") for p in doc.pages)
+        if text.strip():
+            return text
+    except Exception:
+        pass
     try:
         import pypdf
         reader = pypdf.PdfReader(str(pdf))
         return "\n".join((p.extract_text() or "") for p in reader.pages)
-    except Exception:
-        pass
-    try:
-        import pdfplumber
-        with pdfplumber.open(str(pdf)) as doc:
-            return "\n".join((p.extract_text() or "") for p in doc.pages)
     except Exception:
         return ""
 
@@ -159,6 +174,22 @@ def verify_pdf(pdf: Path, *, expect_keywords: list[str], contact: list[str],
             sample = ", ".join(f"{a}-{b}" for a, b in split[:5])
             fail(f"hyphen-split words in the text layer ({sample}) — "
                  f"add \\hyphenpenalty=10000 \\exhyphenpenalty=10000 \\sloppy")
+
+    # The mirror image of a hyphen split: two columns whose text runs collide,
+    # so a role title and its dates come out as one token. "Computational
+    # AlgebraMay 2026" costs the parser the employment date, which is a field
+    # most ATS index on. Checked against a month name or a year specifically,
+    # because that is the collision that matters and it produces no false
+    # positives on ordinary CamelCase like "PyTorch" or "JavaScript".
+    if checks.get("no_collided_columns", True):
+        months = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+        collided = re.findall(rf"\b([A-Za-z]{{3,}}?)((?:{months})[a-z]*\s+(?:19|20)\d{{2}})", flat)
+        collided += [(a, b) for a, b in re.findall(r"\b([a-z]{3,})((?:19|20)\d{2})\b", flat)]
+        if collided:
+            sample = ", ".join(f"{a}|{b}" for a, b in collided[:4])
+            fail(f"column text runs collided in the text layer ({sample}) — a "
+                 f"parser reads the heading and the date as one token and loses "
+                 f"the date. Shorten the heading or widen the gap.")
 
     if checks.get("keywords_present_verbatim", True):
         missing = [k for k in expect_keywords
