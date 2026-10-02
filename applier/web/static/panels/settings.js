@@ -9,7 +9,8 @@
  */
 
 import {
-  el, clear, get, post, put, pill, toast, modal, refreshChrome } from '../app.js';
+  el, clear, get, post, put, pill, toast, modal, refreshChrome,
+  token } from '../app.js';
 
 const THEME_KEY = 'applier.theme';
 
@@ -514,11 +515,76 @@ async function renderProfile(host, ctx) {
 }
 
 /* ---------------------------------------------------------- maintenance -- */
+/* The browser extension pairs by pasting this session's token. The token is
+ * never returned by an endpoint — this page already has it, which is how it
+ * loaded at all — so the pairing string is assembled here rather than served. */
+async function extensionCard() {
+  const card = el('div', { class: 'card' },
+    el('h2', {}, 'Browser extension',
+      el('span', { class: 'sub' }, 'apply from the tab you are already on')));
+
+  let info;
+  try {
+    ({ extension: info } = await get('/api/extension'));
+  } catch (e) {
+    card.appendChild(el('div', { class: 'banner bad' }, e.message));
+    return card;
+  }
+
+  if (!info.installed) {
+    card.appendChild(el('div', { class: 'banner warn' },
+      `No extension found at ${info.path}. It ships with the project; if this is ` +
+      `missing, the checkout is incomplete.`));
+    return card;
+  }
+
+  const pairUrl = `${location.origin}/#t=${token()}`;
+
+  const dl = el('dl', { class: 'kv' });
+  dl.append(el('dt', {}, 'Load this folder'), el('dd', { class: 'mono small' }, info.path));
+  dl.append(el('dt', {}, 'Version'), el('dd', { class: 'small' }, info.version || '—'));
+  card.appendChild(dl);
+
+  card.appendChild(el('p', { class: 'muted small u-mt-12px' },
+    'In Chrome: open chrome://extensions, turn on Developer mode, choose ' +
+    '"Load unpacked", and pick the folder above. Then click the extension, ' +
+    'press "Pair with applier", and paste the link below.'));
+
+  const box = el('pre', { class: 'jd mono' }, pairUrl);
+  card.appendChild(box);
+
+  card.appendChild(el('div', { class: 'row u-mt-8px' },
+    el('button', {
+      class: 'btn btn-primary',
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(pairUrl);
+          toast('Pairing link copied', 'ok');
+        } catch {
+          // Clipboard access can be refused; selecting the text is as good.
+          const r = document.createRange();
+          r.selectNodeContents(box);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(r);
+          toast('Select-all is ready — press Ctrl+C', 'info');
+        }
+      },
+    }, 'Copy pairing link'),
+    el('span', { class: 'dim small' },
+      'This token dies when the server restarts, so pair again after a restart.')));
+
+  return card;
+}
+
+
 async function renderMaintenance(host) {
   loading(host, 'Loading paths…');
   let p;
   try { p = await get('/api/paths'); } catch (e) { failed(host, e); return; }
   clear(host);
+
+  host.appendChild(await extensionCard());
 
   const entries = Object.entries(p.paths || {});
   const pathCard = el('div', { class: 'card' },

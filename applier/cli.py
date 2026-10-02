@@ -206,6 +206,42 @@ def gui(
 
 
 @app.command()
+def extension() -> None:
+    """Where the Chrome extension lives, and how to pair it.
+
+    The extension talks to this machine and nowhere else. It has no remote
+    endpoint, loads no code from a network, and can do nothing at all unless
+    `applier gui` is running.
+    """
+    from .config import ROOT
+    ext = ROOT / "extension"
+    if not (ext / "manifest.json").exists():
+        con.print(f"[red]No extension found at[/red] {ext}")
+        raise typer.Exit(1)
+
+    con.print(Panel.fit(str(ext), title="load this folder", border_style="cyan"))
+    con.print("""
+[bold]Install[/bold] (once)
+  1. Open [cyan]chrome://extensions[/cyan]
+  2. Turn on [bold]Developer mode[/bold], top right
+  3. Click [bold]Load unpacked[/bold] and choose the folder above
+
+[bold]Pair[/bold] (again after every server restart)
+  4. Run [cyan]python -m applier gui[/cyan] and copy the link it prints
+  5. Click the extension, then [bold]Pair with applier[/bold], and paste it
+
+The token is minted fresh each launch, so a leaked one stops working the
+moment you restart the server. That is the trade for not storing a secret
+on disk.
+
+[bold]Use[/bold]
+  Open any job posting, click the extension, pick how much it should do,
+  press Apply. It runs on your machine; switch tabs and carry on. You get a
+  notification when it finishes.
+""")
+
+
+@app.command()
 def doctor() -> None:
     """Check everything before a real run."""
     from .db import get_db

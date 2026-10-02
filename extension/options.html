@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+<title>applier — pairing</title>
+<style>
+  body { width: auto; max-width: 620px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 13px; margin: 20px 0 8px; }
+  p  { color: var(--text2); margin: 0 0 10px; }
+  label.f { display: block; margin-bottom: 12px; }
+  label.f > span { display: block; font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+  input { width: 100%; background: var(--bg); border: 1px solid var(--line2); color: var(--text);
+          border-radius: 6px; padding: 8px 10px; font: inherit; font-size: 13px;
+          font-family: var(--mono); }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .actions .btn { width: auto; }
+</style>
+</head>
+<body>
+
+<h1><span class="mark">&#9654;</span> applier</h1>
+<p>This extension talks to applier running on this computer and to nothing else.</p>
+
+<h2>1. Start the server</h2>
+<pre class="code">python -m applier gui</pre>
+<p>It prints a link. Everything after the <code>#t=</code> is the session token.</p>
+
+<h2>2. Paste the token</h2>
+<label class="f">
+  <span>Session token</span>
+  <input id="token" type="text" spellcheck="false" placeholder="paste the part after #t=" autocomplete="off">
+</label>
+<label class="f">
+  <span>Port (only change this if you started the server on a different one)</span>
+  <input id="port" type="number" min="1" max="65535" value="8765">
+</label>
+
+<div class="actions">
+  <button id="save" class="btn primary">Save and test</button>
+  <span id="result" class="status"></span>
+</div>
+
+<h2>A note on the token</h2>
+<p>
+  The token is minted fresh every time <code>applier gui</code> starts, so after
+  a restart you will need to paste the new one. That is deliberate: it means a
+  token that leaks stops working as soon as you restart the server.
+</p>
+<p>
+  It is stored in this extension's local storage, which no website and no other
+  extension can read. It is never sent anywhere except to
+  <code>127.0.0.1</code> on your own machine.
+</p>
+
+<script type="module" src="options.js"></script>
+</body>
+</html>
