@@ -233,6 +233,52 @@ def test_an_unrecognised_heading_fails_lint_rather_than_vanishing(tmp_path):
     assert "never appear" in problems[0], f"the message does not explain the risk: {problems[0]}"
 
 
+def test_a_file_copied_from_rendered_markdown_is_refused(tmp_path):
+    """The exact failure that reached a real user.
+
+    Copying the master resume out of a chat's *rendered* view rather than its
+    code block strips every `#` marker and folds the metadata lines into one
+    paragraph. The result parsed to zero entries, imported "successfully",
+    and then linted clean — vacuously, because an empty bank has nothing to
+    find fault with. You would believe it had worked until a render came back
+    empty, which might be days later.
+    """
+    from applier.tailor.master import MasterError
+
+    flattened = (
+        "Skills\n"
+        "Languages: Python, TypeScript\n"
+        "Experience\n"
+        "Student Consultant — Colgate ITS\n"
+        "id: exp_its org: Service Desk dates: Fall 2026 -- Present tags: support\n"
+        "* Provide frontline support ~ Provide support. ~~ Support.\n"
+    )
+    m = tmp_path / "master.md"
+    m.write_text(flattened, encoding="utf-8")
+
+    with pytest.raises(MasterError) as err:
+        build_bank(m, tmp_path, write=True)
+    msg = str(err.value)
+    assert "no entries" in msg
+    assert "code block" in msg, "the message must say how to fix it"
+
+
+def test_a_skills_only_file_is_still_valid(tmp_path):
+    """Zero entries is legitimate when the file is only a skills block."""
+    m = tmp_path / "master.md"
+    m.write_text("## Skills\n\nLanguages: Python, C++\n", encoding="utf-8")
+    build_bank(m, tmp_path, write=True)          # must not raise
+    assert Bank(tmp_path).skills.get("Languages") == ["Python", "C++"]
+
+
+def test_an_empty_bank_does_not_lint_clean(tmp_path):
+    """"0 problems" on a bank that can render nothing is not a pass."""
+    (tmp_path / "atoms.yaml").write_text("atoms: []\n", encoding="utf-8")
+    problems = Bank(tmp_path).lint()
+    assert problems, "an empty bank reported no problems"
+    assert "empty" in problems[0].lower()
+
+
 def test_every_renderable_section_is_reachable_by_some_heading():
     """A section the template renders but no heading maps to would be dead."""
     from applier.tailor.master import KNOWN_SECTIONS, RENDERABLE_SECTIONS

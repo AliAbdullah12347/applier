@@ -135,6 +135,16 @@ class Bank:
     def lint(self) -> list[str]:
         """Structural problems that would let an untrue claim through."""
         problems: list[str] = []
+
+        # An empty bank has nothing to find fault with, so it used to lint
+        # clean — the most misleading possible result. "0 problems" on a bank
+        # that can render nothing is not a pass.
+        if not self.atoms:
+            problems.append(
+                "the bank is empty: no atoms were loaded from "
+                f"{self.dir / 'atoms.yaml'}. Run `bank import` and check it "
+                "reported a non-zero entry count.")
+            return problems
         # An atom in a section no template renders is content that imported
         # cleanly, linted cleanly, and will never reach a page. Reporting it is
         # the difference between a typo you fix in ten seconds and a bullet you
