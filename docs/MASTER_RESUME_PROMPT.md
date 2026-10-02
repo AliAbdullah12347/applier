@@ -19,6 +19,31 @@ Use both. The site usually carries detail the resume had no room for —
 technical skills, project write-ups, longer descriptions — and that detail is
 exactly what a master resume is for.
 
+## I already have a master resume — merge, do not replace
+
+I will paste my current `master_resume.md` below. It contains entries that are
+**not** on my resume PDF and not on my website, because the whole point of that
+file is to hold more than a resume can.
+
+**Carry every existing entry forward.** Your job is to merge: keep what is
+there, improve it where you can, and add what is new. An entry that exists in
+my current file and not in your output has been deleted, and I will not notice
+until the job it was perfect for comes around.
+
+Specifically:
+
+- **Keep every `id:` exactly as it is.** Those are the permanent link between a
+  bullet and the numbers in its ledger. A renamed id orphans its claims.
+- Keep any `[pin]` I already set unless you tell me in your report why it
+  should move.
+- If you think an existing bullet is weak, improve the wording — do not drop
+  the entry.
+- At the end, **count the entries** in my current file and in your output, and
+  state both numbers in your report. If yours is lower, name exactly what you
+  removed and why.
+
+<!-- PASTE YOUR CURRENT master_resume.md HERE, or say you do not have one yet -->
+
 ## About me, for context
 
 <!-- Replace this paragraph with your own situation. The more specific, the
@@ -81,6 +106,36 @@ findings in it at all.
 
 An invented "resolved 200+ tickets" is the exact failure this file exists to
 prevent, and it is the easiest one to produce by accident.
+
+---
+
+# How to hand me the file — this part goes wrong
+
+Put the whole file in **one fenced code block** and nothing else inside it.
+
+Then, when I collect it, I must use the code block's **copy button**. Selecting
+the rendered text and copying it does not work, and it fails in a way that
+looks fine: markdown rendering strips every `#` from the headings and folds the
+metadata lines into a single paragraph, so
+
+```
+### Student Consultant — Colgate ITS
+id: exp_its
+org: Service Desk
+dates: Fall 2026 -- Present
+```
+
+comes back as
+
+```
+Student Consultant — Colgate ITS
+id: exp_its org: Service Desk dates: Fall 2026 -- Present
+```
+
+The text all looks present. The structure is gone, and the importer reads zero
+entries out of it.
+
+If you can offer the file as a download, do that as well as the code block.
 
 ---
 
@@ -297,6 +352,8 @@ wording or ownership I still need to confirm.
    Be concrete: "no Kubernetes, no Kafka, nothing distributed" beats "could
    strengthen infrastructure skills".
 5. **Anything you left out** of the file, and why.
+6. **Entry count**: how many `###` entries my current file had, and how
+   many yours has. If yours is lower, name every entry you dropped.
 
 Keep the report short. I will act on it, not read it twice.
 
@@ -367,4 +424,6 @@ placeholder text in it, the file is correct.
 - Does any bullet contain `TODO`, `UNCONFIRMED`, `<your`, `XXX` or a
   placeholder of any kind? Every bullet is selectable and will be typeset
   as written — move it to the report or comment it out on one line.
-- Is the whole file inside one code block?
+- Is the whole file inside one code block, with nothing else in it?
+- Does every entry from my current master resume still appear, with its
+  original `id:` unchanged?

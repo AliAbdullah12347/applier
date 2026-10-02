@@ -391,6 +391,39 @@ def _merge(dst: dict, src: dict) -> dict:
 def build_bank(master_path: Path, bank_dir: Path, *, write: bool = True) -> dict:
     """master_resume.md -> atoms.yaml + claims.yaml. Returns a summary."""
     entries, skills = parse(master_path)
+
+    # A file with content but no parseable structure used to import
+    # "successfully" — 0 entries, 0 atoms — and then lint clean, vacuously,
+    # because there was nothing to find fault with. You would believe it had
+    # worked until a render came back empty.
+    #
+    # This is what happens when a master resume is copied out of a rendered
+    # markdown view instead of the raw code block: the `##` and `###` markers
+    # are gone, every metadata line is folded into one paragraph, and the file
+    # is text rather than structure. Refuse it, and say which marker is absent.
+    # `not skills` matters: a file holding only a `## Skills` block has no
+    # entries by design and is perfectly valid. The failure being caught here
+    # is a file that yielded *nothing at all*.
+    if not entries and not skills:
+        raw = master_path.read_text(encoding="utf-8")
+        body = [ln for ln in raw.splitlines() if ln.strip()]
+        if body:
+            hints = []
+            if not any(ln.lstrip().startswith("## ") for ln in body):
+                hints.append("no '## Section' headings")
+            if not any(ln.lstrip().startswith("### ") for ln in body):
+                hints.append("no '### Entry' headings")
+            if not any(re.match(r"^[-*]\s+", ln) for ln in body):
+                hints.append("no '- bullet' lines")
+            detail = "; ".join(hints) or "the structure did not match the expected format"
+            raise MasterError(
+                f"{master_path.name} has {len(body)} lines of text but produced no "
+                f"entries: {detail}.\n"
+                f"  If you copied this out of a chat, copy the RAW text from the "
+                f"code block rather than the rendered view — rendering strips the "
+                f"'#' markers and folds the metadata lines together."
+            )
+
     bank_dir.mkdir(parents=True, exist_ok=True)
 
     claims_path = bank_dir / "claims.yaml"
