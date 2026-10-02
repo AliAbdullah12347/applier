@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+<title>applier</title>
+</head>
+<body>
+
+<header>
+  <span class="mark">&#9654;</span>
+  <strong>applier</strong>
+  <span id="status" class="status">checking…</span>
+</header>
+
+<main id="main">
+  <section id="current" class="card">
+    <div class="label">This tab</div>
+    <div id="url" class="url">—</div>
+    <div id="not-a-job" class="note" hidden></div>
+
+    <div class="label mt">How much should it do?</div>
+    <div id="levels" class="levels"></div>
+
+    <button id="apply" class="btn primary" disabled>Apply to this posting</button>
+    <div id="apply-msg" class="msg" hidden></div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <div class="label">Running</div>
+      <button id="refresh" class="btn ghost sm">Refresh</button>
+    </div>
+    <div id="tasks" class="tasks"><div class="empty">Nothing running.</div></div>
+  </section>
+
+  <section class="card compact">
+    <div class="row">
+      <div id="funnel" class="funnel">—</div>
+      <button id="open-dash" class="btn ghost sm">Dashboard</button>
+    </div>
+  </section>
+</main>
+
+<div id="unpaired" class="unpaired" hidden>
+  <p><strong>Not connected.</strong></p>
+  <p class="note">Start the server, then paste its token once.</p>
+  <pre class="code">python -m applier gui</pre>
+  <button id="open-options" class="btn primary">Pair with applier</button>
+</div>
+
+<script type="module" src="popup.js"></script>
+</body>
+</html>

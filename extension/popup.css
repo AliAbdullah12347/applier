@@ -1,0 +1,95 @@
+:root {
+  --bg: #0e1116; --bg2: #151a21; --bg3: #1b222b;
+  --line: #262e39; --line2: #323c4a;
+  --text: #e5e9ef; --text2: #9aa6b6; --text3: #6b7787;
+  --accent: #4c9aff; --accent-dim: #1d3a63;
+  --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:#fff; --bg2:#f6f8fa; --bg3:#eceff3; --line:#d8dee4; --line2:#c2cad3;
+    --text:#1f2328; --text2:#57606a; --text3:#8c959f; --accent:#0969da;
+    --accent-dim:#ddf0ff; --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  width: 360px; margin: 0; background: var(--bg); color: var(--text);
+  font: 13px/1.5 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+}
+
+header {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--bg2);
+}
+.mark { color: var(--accent); }
+.status { margin-left: auto; font-size: 11px; color: var(--text3); font-family: var(--mono); }
+.status.ok { color: var(--ok); } .status.bad { color: var(--bad); }
+
+main { padding: 10px; display: grid; gap: 10px; }
+
+.card { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 11px; }
+.card.compact { padding: 8px 11px; }
+
+.label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text3); }
+.label.mt { margin-top: 11px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.row .label { flex: 1; }
+
+.url {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text2);
+  margin-top: 4px; word-break: break-all; max-height: 44px; overflow: hidden;
+}
+.note { font-size: 11.5px; color: var(--text3); margin-top: 6px; }
+
+.levels { display: grid; gap: 5px; margin: 6px 0 10px; }
+.level {
+  display: flex; gap: 8px; align-items: flex-start; cursor: pointer;
+  border: 1px solid var(--line2); border-radius: 6px; padding: 7px 9px; background: var(--bg);
+}
+.level.on { border-color: var(--accent); background: var(--accent-dim); }
+.level input { margin: 2px 0 0; flex: none; }
+.level .t { font-weight: 600; font-size: 12px; }
+.level .d { color: var(--text2); font-size: 11px; margin-top: 1px; }
+.level .tag { margin-left: auto; font-size: 10px; padding: 1px 6px; border-radius: 8px;
+              border: 1px solid var(--line2); color: var(--text2); white-space: nowrap; }
+.level .tag.submits { color: var(--warn); border-color: var(--warn); }
+.level .tag.safe { color: var(--ok); border-color: var(--ok); }
+
+.btn {
+  width: 100%; border: 1px solid var(--line2); background: var(--bg3); color: var(--text);
+  border-radius: 6px; padding: 7px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.btn:hover:not(:disabled) { border-color: var(--text3); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--text2); width: auto; }
+.btn.sm { padding: 3px 8px; font-size: 11.5px; }
+
+.msg { margin-top: 8px; font-size: 11.5px; padding: 7px 9px; border-radius: 6px;
+       border: 1px solid var(--line2); }
+.msg.ok  { color: var(--ok);  border-color: var(--ok); }
+.msg.bad { color: var(--bad); border-color: var(--bad); }
+
+.tasks { margin-top: 7px; display: grid; gap: 6px; }
+.task { border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--bg); }
+.task .n { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task .m { font-size: 10.5px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
+.task .m .st-running { color: var(--accent); }
+.task .m .st-done    { color: var(--ok); }
+.task .m .st-failed  { color: var(--bad); }
+.task .m .st-stopped { color: var(--warn); }
+.empty { color: var(--text3); font-size: 11.5px; padding: 6px 0; }
+
+.funnel { font-size: 11.5px; color: var(--text2); font-family: var(--mono); flex: 1; }
+
+.unpaired { padding: 16px; display: grid; gap: 8px; }
+.unpaired p { margin: 0; }
+.code {
+  font-family: var(--mono); font-size: 11.5px; background: var(--bg3);
+  border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; margin: 2px 0 6px;
+  user-select: all;
+}

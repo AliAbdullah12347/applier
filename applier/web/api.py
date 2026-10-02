@@ -1031,3 +1031,27 @@ def run_privacy_audit(_body=None, **_kw) -> dict:
 
 def get_paths(_body=None, **_kw) -> dict:
     return {"paths": {k: str(v) for k, v in PATHS.items()}}
+
+
+def get_extension(_body=None, **_kw) -> dict:
+    """Where the browser extension lives and whether it is present.
+
+    Deliberately does NOT return the session token, even though the extension
+    needs one: no endpoint in this server hands back a secret. The page asking
+    this question already holds the token — it is how it got here — so it can
+    assemble the pairing string itself without the token ever being part of a
+    response body.
+    """
+    ext = PATHS["root"] / "extension"
+    manifest = ext / "manifest.json"
+    info: dict[str, Any] = {
+        "path": str(ext),
+        "installed": manifest.is_file(),
+        "files": sorted(p.name for p in ext.glob("*")) if ext.is_dir() else [],
+    }
+    if manifest.is_file():
+        try:
+            info["version"] = json.loads(manifest.read_text(encoding="utf-8")).get("version")
+        except (ValueError, OSError):
+            info["version"] = None
+    return {"extension": info}

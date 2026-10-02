@@ -138,16 +138,34 @@ def check_host(header: str | None, port: int) -> str | None:
     return None
 
 
+EXTENSION_SCHEMES = ("chrome-extension", "moz-extension")
+
+
 def check_origin(origin: str | None, port: int) -> str | None:
     """Reject a cross-origin caller. Absent Origin is allowed.
 
     Browsers omit Origin on same-origin GETs and on top-level navigation, and
     non-browser clients omit it entirely; treating absence as hostile would
     break both without buying anything, since the token is still required.
+
+    One deliberate exception: a browser extension. The Origin check exists to
+    stop a *web page* reaching this server, and a web page cannot forge a
+    `chrome-extension://` origin — only the browser sets it, and only for a
+    real installed extension. So an extension origin passes this check and is
+    then held to the same token requirement as everything else; the token is
+    what actually authorises it, and a hostile extension without the token
+    gets exactly as far as a hostile web page does.
+
+    This is narrower than it looks. No CORS headers are sent, so a *page*
+    still cannot read any reply. Chrome exempts an extension's own background
+    fetches from CORS when it holds the matching host permission, which is why
+    the extension works without the server relaxing anything for pages.
     """
     if not origin or origin == "null":
         return None
     scheme, _, rest = origin.partition("://")
+    if scheme in EXTENSION_SCHEMES:
+        return None
     if scheme not in ("http", "https"):
         return f"origin scheme {scheme!r} not allowed"
     host, oport = _split_hostport(rest)

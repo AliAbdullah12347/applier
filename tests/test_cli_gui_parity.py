@@ -29,6 +29,7 @@ STATIC = ROOT / "applier" / "web" / "static"
 # An empty tuple means "deliberately terminal-only", with a reason.
 PARITY: dict[str, tuple[str, ...]] = {
     "gui":      (),                       # the GUI cannot launch itself
+    "extension": ("GET /api/extension",),
     "setup":    ("PUT /api/profile", "PUT /api/secrets"),
     "doctor":   ("POST /api/doctor",),
     "apply":    ("POST /api/apply",),
