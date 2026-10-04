@@ -57,6 +57,45 @@ class Atom:
         return self.phrasings.get(size) or self.phrasings.get("medium") or ""
 
 
+# How many bullets an entry must have on the page before its tags may vouch
+# for a skill none of those bullets mentions.
+TAG_VOUCH_MIN_BULLETS = 3
+
+_SKILL_STOPWORDS = {"and", "or", "of", "the", "for", "with", "in", "on", "a"}
+
+
+def _all_words_tagged(skill: str, tags: str) -> bool:
+    """Is every content word of this skill present in the entry's tags?
+
+    Tags are single words -- `troubleshooting`, `ticketing` -- while a skill
+    may be a phrase: "hardware and software troubleshooting". Matching the
+    phrase against the tag blob fails, and matching any single word would let
+    a `python` tag vouch for "python bytecode internals". Requiring all of
+    them is the reading that holds in both directions.
+    """
+    words = [w for w in re.findall(r"[a-z0-9+#]+", (skill or "").lower())
+             if w not in _SKILL_STOPWORDS]
+    if not words:
+        return False
+    return all(re.search(rf"(?<![\w#+]){re.escape(w)}(?![\w#+])", tags) for w in words)
+
+
+def mentions(haystack: str, skill: str) -> bool:
+    """Does this text actually use that skill?
+
+    Short and punctuated names need a real boundary: plain substring matching
+    finds "C" inside "Linux", "R" inside "React", and "Go" inside "Django".
+    Longer alphabetic names are matched as substrings so that "real-time
+    rendering" is found inside "real-time rendering pipelines".
+    """
+    s = (skill or "").lower().strip()
+    if not s:
+        return False
+    if len(s) <= 4 or not s.replace(" ", "").isalpha():
+        return re.search(rf"(?<![\w#+.]){re.escape(s)}(?![\w#+.])", haystack) is not None
+    return s in haystack
+
+
 @dataclass
 class Selection:
     atoms: list[tuple[Atom, str]]          # (atom, size)
@@ -252,6 +291,114 @@ class Bank:
         if atom.group not in seen_groups:
             cost += 2          # the role heading this bullet renders under
         return cost
+
+    def skills_for(self, jd_text: str, sel: "Selection", *,
+                   cap: int = 26, floor: int = 6) -> list[str]:
+        """The skills worth printing for THIS application, as one flat list.
+
+        The labelled block this replaces spent eleven lines on every resume,
+        most of them on work the page never mentions -- a client-service
+        application carried "Graphics: Unreal Engine 5, Blueprints, Blender,
+        HLSL", and a backend one carried cell-type deconvolution. Eleven lines
+        is four or five bullets that did not fit.
+
+        A skill earns its place one of two ways: the posting asks for it, or a
+        bullet that made it onto the page demonstrates it. Anything else is an
+        assertion with nothing behind it, which is the one thing a skills
+        section should never be -- and it is also what an interviewer picks
+        when looking for something to probe.
+
+        The group labels go too. They cost a line each in all but name, and
+        nobody reads "Languages:" before "Python". The master file's own order
+        is kept instead, so the list still runs from languages through to
+        tooling without spending a line saying so.
+
+        `floor` keeps the section from collapsing on a vague posting: if too
+        little is earned, the top of the master file tops it back up.
+        """
+        roles = getattr(self, "roles", {}) or {}
+        shown: list[str] = []
+        weight: dict[str, int] = {}
+        for atom, _size in sel.atoms:
+            weight[atom.group] = weight.get(atom.group, 0) + 1
+
+        tagged: list[str] = []
+        for atom, size in sel.atoms:
+            text, _ = self.resolve(atom.text(size), strict=False)
+            shown.append(text or "")
+            meta = roles.get(atom.group, {}) or {}
+            shown.append(str(meta.get("stack", "")))
+            shown.append(str(meta.get("name", "")))
+            # Only an entry with a real presence on the page gets to vouch for
+            # a skill its bullets never mention. One pinned bullet is not a
+            # claim to a specialism: the service desk is pinned onto every
+            # resume, and when a single bullet of it could vouch, a
+            # quantitative trading resume ended with "macOS, Windows, iOS,
+            # Android, ticketing, escalation". Four bullets of it on a client
+            # service resume is a different matter, and that is the case this
+            # tier was added for.
+            if weight.get(atom.group, 0) >= TAG_VOUCH_MIN_BULLETS:
+                tagged.extend(str(t) for t in (getattr(atom, "tags", None) or []))
+                tagged.extend(str(t) for t in (meta.get("tags") or []))
+        page = " ".join(shown).lower()
+        tags = " ".join(tagged).lower().replace("_", " ")
+        jd = (jd_text or "").lower()
+
+        # Three ways to earn a place, best first.
+        #
+        #   0  the posting asks for it by name
+        #   1  a bullet on the page, or a project's stack, demonstrates it
+        #   2  an entry on the page is tagged with it
+        #
+        # Tier 2 exists because the service desk entry is tagged `ticketing`
+        # and `escalation` while none of its four bullets happens to use
+        # either word. Without it a client-service resume printed CIBERSORT
+        # and WGCNA -- earned honestly, via the capstone's stack -- and left
+        # out the two terms that role is actually about.
+        tiers: dict[str, int] = {}
+        for group in self.skills.values():
+            for skill in group:
+                key = skill.lower().strip()
+                if not key or key in tiers:
+                    continue
+                if mentions(jd, skill):
+                    tiers[key] = 0
+                elif mentions(page, skill):
+                    tiers[key] = 1
+                elif _all_words_tagged(skill, tags):
+                    tiers[key] = 2
+                else:
+                    tiers[key] = 3
+
+        flat = [sk for group in self.skills.values() for sk in group]
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for want in (0, 1, 2):
+            for skill in flat:                      # master-file order within a tier
+                key = skill.lower().strip()
+                if key in seen or tiers.get(key) != want:
+                    continue
+                seen.add(key)
+                ordered.append(skill)
+
+        out = ordered[:max(cap, 0)]
+
+        # The floor is a backstop for a posting too vague to earn anything,
+        # not a quota. It never overrules the cap -- it used to, so asking for
+        # three skills returned ten -- and it tops up in the master file's own
+        # order, which puts the general before the niche, so a thin posting
+        # gets languages rather than whatever happens to be listed last.
+        want = min(floor, max(cap, 0))
+        if len(out) < want:
+            have = {o.lower().strip() for o in out}
+            for skill in flat:
+                if len(out) >= want:
+                    break
+                key = skill.lower().strip()
+                if key not in have:
+                    have.add(key)
+                    out.append(skill)
+        return out
 
     def select(self, jd_text: str, *, family: str = "default",
                line_budget: int = 38, max_per_group: int = 4) -> Selection:

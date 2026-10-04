@@ -118,6 +118,7 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
     max_compiles = int(settings.get("tailor.autofit.max_compiles", 3))
     font_pt = int(settings.get("tailor.autofit.font_pt_floor", 10))
     budget_start = int(settings.get("tailor.autofit.line_budget_start", 48))
+    skills_cap = int(settings.get("tailor.skills.max_items", 26))
     margin = float(settings.get("tailor.autofit.margin_in_floor", 0.45))
 
     out_pdf = artifact / "resume.pdf"
@@ -130,12 +131,17 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
         budget = int(budget_start * rung) - (attempt * 5)
         sel = bank.select(jd, family=family, line_budget=budget)
         sections = _group_selection(sel, bank)
+        # Skills shrink with everything else. They used to be the one part of
+        # the page the ladder could not touch, which meant a resume fighting
+        # for room dropped bullets while an eleven-line skills block sat
+        # untouched above them.
+        skills = bank.skills_for(jd, sel, cap=max(8, int(skills_cap * rung)))
 
         ctx = {
             "identity": ident,
             "education": education,
             "education_atoms": [e for grp in sections.get("education", []) for e in grp["points"]],
-            "skills": bank.skills,
+            "skills": skills,
             "experience": sections.get("experience", []),
             "projects": sections.get("projects", []),
             "leadership": sections.get("leadership", []),
@@ -159,7 +165,7 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
             prof_nums += [str(e.get("gpa", "")), str(e.get("expected_graduation", ""))]
         for key in ("linkedin", "github", "website"):
             prof_nums.append(str(ident.get(key, "")))
-        keywords = _claimed_keywords(bank, sel)
+        keywords = _claimed_keywords(skills)
         report = verify_pdf(out_pdf, expect_keywords=keywords, contact=contact,
                             claims_used=sel.claims_used, settings=settings,
                             profile_numerals=prof_nums)
@@ -196,16 +202,18 @@ def _pretty_month(ym: str) -> str:
     return f"{names[int(m.group(2))]} {m.group(1)}"
 
 
-def _claimed_keywords(bank: Bank, sel: Selection) -> list[str]:
+def _claimed_keywords(skills: list[str]) -> list[str]:
     """A handful of skill tokens that must survive PDF extraction intact.
 
     Deliberately short: this proves the text layer is sound, it is not an
     attempt to stuff terms in.
+
+    Taken from the skills actually printed, not from the whole bank. When the
+    bank was the source, trimming the block to what the page earns would have
+    had verification demand keywords the page no longer contains, and every
+    render would have failed on a resume that was perfectly sound.
     """
-    out: list[str] = []
-    for group in bank.skills.values():
-        out.extend(group[:2])
-    return out[:6]
+    return [s for s in skills if len(s) > 2][:6]
 
 
 # --------------------------------------------------------------------------- #

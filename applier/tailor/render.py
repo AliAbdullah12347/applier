@@ -274,7 +274,7 @@ def verify_pdf(pdf: Path, *, expect_keywords: list[str], contact: list[str],
         # Profile-sourced figures -- GPA, its scale, the graduation date -- are
         # typeset from config/profile.yaml, not from the claims ledger, so they
         # have no claim to trace to. Flagging them produced a permanent warning
-        # on every single resume ("numeral '00' not traced", from GPA [redacted-gpa]/4.00),
+        # on every single resume ("numeral '00' not traced", from the GPA line),
         # and a check that always warns is a check people stop reading.
         allowed: set[str] = set()
         for v in (list(claims_used.values()) + list(contact)

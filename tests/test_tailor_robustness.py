@@ -389,7 +389,7 @@ def test_every_renderable_section_is_reachable_by_some_heading():
 def test_profile_numerals_are_not_reported_as_untraced():
     """GPA and the graduation date are typeset from the profile, not the bank,
     so they have no claim to trace to. Flagging them put a permanent warning
-    on every resume ("numeral '00' not traced", from GPA [redacted-gpa]/4.00) — and a
+    on every resume ("numeral '00' not traced", from the GPA line) — and a
     check that always warns is a check people stop reading."""
     import inspect
 

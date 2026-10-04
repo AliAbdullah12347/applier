@@ -280,6 +280,13 @@ tailor:
     require_atom_provenance: true
 
   # Every generated PDF is re-extracted and checked before it can be sent.
+  skills:
+    # Upper bound on the flat skills list. A skill is printed only
+    # if the posting asks for it or a bullet on the page shows it,
+    # so this is a ceiling, not a target -- most resumes come in
+    # well under. Shrinks with the autofit ladder.
+    max_items: 26
+
   verify:
     enabled: true
     fail_action: "delete"           # delete | quarantine

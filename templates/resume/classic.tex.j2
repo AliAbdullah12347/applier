@@ -104,12 +104,14 @@
 %% ------------------------------------------------------------------ skills --
 %% Placed high on purpose: recruiters keyword-search the ATS database by hand,
 %% and a resume with no skills block is invisible to that search.
+%% One flat run, no group labels. The labels cost a line each in all but
+%% name and tell a reader nothing they do not already know from the items;
+%% the space they were using is worth more as bullets. Which skills appear is
+%% decided per application by Bank.skills_for.
 \section{Technical Skills}
 \begin{itemize}[leftmargin=0.15in,label={}]
   \small{\item[]
-  \BLOCK{for group, items in skills.items()}
-    \textbf{\VAR{group|tex}}: \VAR{items|join(', ')|tex} \\
-  \BLOCK{endfor}
+  \VAR{skills|join(', ')|tex}
   }
 \end{itemize}
 \vspace{-14pt}
@@ -130,14 +132,17 @@
 \vspace{-8pt}
 \BLOCK{endif}
 
-%% ---------------------------------------------------------------- projects --
-\BLOCK{if projects}
-\section{Projects}
+%% -------------------------------------------------------------- leadership --
+%% Above Projects: it is the section a reader is least likely to reach, and
+%% it was carrying the extracurricular achievement that several postings ask
+%% for by name.
+\BLOCK{if leadership}
+\section{Leadership}
 \begin{itemize}[leftmargin=0in,label={}]
-\BLOCK{for p in projects}
-  \item[]\small{\textbf{\VAR{p.name|tex}}\BLOCK{if p.stack} \textbar{} \textit{\VAR{p.stack|tex}}\BLOCK{endif}}
+\BLOCK{for l in leadership}
+  \entry{\VAR{l.title|tex}}{\VAR{l.dates|tex}}{\VAR{l.org|tex}}{}
   \bullets
-  \BLOCK{for line in p.points}
+  \BLOCK{for line in l.points}
     \point{\VAR{line|tex}}
   \BLOCK{endfor}
   \bulletsend
@@ -146,14 +151,14 @@
 \vspace{-8pt}
 \BLOCK{endif}
 
-%% -------------------------------------------------------------- leadership --
-\BLOCK{if leadership}
-\section{Leadership}
+%% ---------------------------------------------------------------- projects --
+\BLOCK{if projects}
+\section{Projects}
 \begin{itemize}[leftmargin=0in,label={}]
-\BLOCK{for l in leadership}
-  \entry{\VAR{l.title|tex}}{\VAR{l.dates|tex}}{\VAR{l.org|tex}}{}
+\BLOCK{for p in projects}
+  \item[]\small{\textbf{\VAR{p.name|tex}}\BLOCK{if p.stack} \textbar{} \textit{\VAR{p.stack|tex}}\BLOCK{endif}}
   \bullets
-  \BLOCK{for line in l.points}
+  \BLOCK{for line in p.points}
     \point{\VAR{line|tex}}
   \BLOCK{endfor}
   \bulletsend

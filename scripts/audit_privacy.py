@@ -209,6 +209,15 @@ class Audit:
     # Added after a tracked documentation file was written containing a GPA,
     # a university and an immigration status, and all five existing checks
     # passed it.
+    # Keys whose value is worth hiding even though it is short. The length
+    # floor below exists because a four-character string matches half the
+    # repository -- but a GPA is exactly four characters, and "[redacted-gpa]" sat in a
+    # code comment in this public repository through five consecutive clean
+    # audits because of it. These are matched on a word boundary so that a
+    # GPA cannot fire inside a version number or a byte count.
+    SHORT_SENSITIVE_KEYS = {"gpa", "sat", "act", "dob", "ssn", "sin",
+                            "passport", "nin", "student_id"}
+
     PROFILE_SKIP_KEYS = {
         # Values too generic to search for without matching everything.
         "country", "state", "pronouns", "gender", "us_citizen", "remote",
@@ -247,7 +256,10 @@ class Audit:
                 s = str(node).strip()
                 # Short values and sentinels produce nothing but false
                 # positives; "ASK" and "Yes" appear in every template.
-                if (len(s) >= 5 and key not in self.PROFILE_SKIP_KEYS
+                if (key.lower() in self.SHORT_SENSITIVE_KEYS
+                        and len(s) >= 3 and not s.isdigit()):
+                    needles[s] = key
+                elif (len(s) >= 5 and key not in self.PROFILE_SKIP_KEYS
                         and s.upper() not in ("ASK", "TRUE", "FALSE", "NONE")
                         and not s.isdigit()):
                     needles[s] = key
@@ -275,7 +287,14 @@ class Audit:
                 continue
             self.checks += 1
             for needle, key in needles.items():
-                if needle in text:
+                if len(needle) < 5:
+                    # Short needles only count on a real boundary: "[redacted-gpa]" is a
+                    # GPA in "GPA [redacted-gpa]" and a coincidence in "1[redacted-gpa]76".
+                    hit = re.search(rf"(?<![\w.]){re.escape(needle)}(?![\w.])",
+                                    text) is not None
+                else:
+                    hit = needle in text
+                if hit:
                     self.fail(f"TRACKED {f} contains your private "
                               f"{key!r} value from profile.yaml: {needle[:48]!r}")
 
