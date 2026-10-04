@@ -136,6 +136,53 @@ def extract_text(pdf: Path) -> str:
         return ""
 
 
+def squeezed_words(pdf: Path) -> list[str]:
+    """Words a parser will run together because the spaces between them are too thin.
+
+    LaTeX justifies a line by shrinking interword glue. Push enough text onto
+    one line and the spaces narrow until they are no longer distinguishable
+    from ordinary inter-letter spacing -- at which point extraction silently
+    joins the words. A real skills line came out of pdfplumber as
+
+        SageMath,Galoisfieldarithmetic,finiteprojectivegeometry,linearalgebra
+
+    on a PDF that *looks* perfect, because the spaces were still there, just
+    2.9pt wide against pdfplumber's 3pt word-split threshold.
+
+    This is not merely a verifier blind spot like the pypdf column collision
+    was. pdfminer -- which pdfplumber is built on -- is what several real ATS
+    pipelines use, so a line this tight genuinely loses its word boundaries on
+    the employer's side. The skills section is the part of a resume most likely
+    to be keyword-matched, which makes it the worst possible place to lose them.
+
+    Measured rather than guessed: extract twice, once at the default tolerance
+    and once at a tolerance tight enough that only true letter spacing merges.
+    Anything that is one token at the default and several when read tightly has
+    spaces in the ambiguous band, and is reported.
+    """
+    try:
+        import pdfplumber
+    except Exception:
+        return []
+
+    merged: list[str] = []
+    try:
+        with pdfplumber.open(str(pdf)) as doc:
+            for page in doc.pages:
+                loose = {w["text"] for w in page.extract_words(x_tolerance=3.0)}
+                tight = {w["text"] for w in page.extract_words(x_tolerance=1.2)}
+                for word in loose - tight:
+                    # A comma or a full stop inside a token is conclusive: no
+                    # word contains one, so the gap after it was a real space.
+                    # Otherwise require some length, so that a tight tolerance
+                    # splitting a kerned pair does not raise a false alarm.
+                    if re.search(r"[,.;]\w", word) or len(word) >= 16:
+                        merged.append(word)
+    except Exception:
+        return []
+    return sorted(merged, key=len, reverse=True)
+
+
 def page_count(pdf: Path) -> int:
     try:
         import pypdf
@@ -190,6 +237,22 @@ def verify_pdf(pdf: Path, *, expect_keywords: list[str], contact: list[str],
             fail(f"column text runs collided in the text layer ({sample}) — a "
                  f"parser reads the heading and the date as one token and loses "
                  f"the date. Shorten the heading or widen the gap.")
+
+    # Spaces too thin to survive extraction. Unlike the collision check above,
+    # this one is not about the verifier's eyesight: the parser on the
+    # employer's side uses the same family of heuristic, so a line squeezed
+    # this hard really does arrive with its words run together.
+    #
+    # Reported as a failure rather than a warning because it is actionable and
+    # self-correcting: the autofit ladder retries with a smaller budget, the
+    # line stops being overfull, and the spaces come back.
+    if checks.get("no_squeezed_words", True):
+        squeezed = squeezed_words(pdf)
+        if squeezed:
+            sample = ", ".join(squeezed[:3])
+            fail(f"interword spaces too narrow to survive extraction "
+                 f"({sample}) -- the line is being justified so tightly that a "
+                 f"parser reads the words as one token. Shorten it.")
 
     if checks.get("keywords_present_verbatim", True):
         missing = [k for k in expect_keywords

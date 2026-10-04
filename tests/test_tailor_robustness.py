@@ -437,3 +437,51 @@ def test_the_latex_escape_table_covers_every_special_character():
     out = tex_escape("C# and F# with snake_case, 60-85% of $12,500 ~ R&D {x}")
     for raw in ("\\#", "\\_", "\\%", "\\$", "\\&", "\\{", "\\}", "textasciitilde"):
         assert raw in out, f"{raw} missing from {out!r}"
+
+
+# --------------------------------------------------------------------------- #
+# interword spacing: the whole document sat 0.07pt above the cliff
+# --------------------------------------------------------------------------- #
+def test_the_template_still_widens_interword_spaces():
+    """Latin Modern's 0.333em space is 3.0pt at 9pt -- pdfminer's split threshold.
+
+    The autofit ladder drops to 9pt routinely, so without this the natural
+    space in a tailored resume IS the threshold, and any line the justifier
+    shrinks at all falls under it and has its words run together. Measured on
+    a real render: 3.07pt everywhere, 2.93pt on one skills line, which
+    extracted as "SageMath,Galoisfieldarithmetic,finiteprojectivegeometry".
+    """
+    from pathlib import Path
+    tpl = (Path(__file__).resolve().parent.parent
+           / "templates" / "resume" / "classic.tex.j2").read_text(encoding="utf-8")
+    assert "spaceskip" in tpl, "the interword-space guard is gone"
+    assert "AddToHook{selectfont}" in tpl, (
+        "spaceskip must be set through the selectfont hook, or it freezes at "
+        "the preamble's font size and stops tracking the autofit ladder")
+    # Shrink must stay near zero: a stretched space still reads as a space,
+    # a shrunk one stops being one.
+    import re as _re
+    m = _re.search(r"\\spaceskip=([\d.]+)\\fontdimen2.*?minus ([\d.]+)\\fontdimen4", tpl)
+    assert m, "could not read the spaceskip definition"
+    assert float(m.group(1)) >= 1.15, "interword space is not widened enough"
+    assert float(m.group(2)) <= 0.25, "too much shrink; a tight line can still collapse"
+
+
+def test_verify_pdf_checks_for_squeezed_words():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent
+           / "applier" / "tailor" / "render.py").read_text(encoding="utf-8")
+    assert "no_squeezed_words" in src, "the squeezed-word check is not wired in"
+    assert "def squeezed_words" in src
+
+
+def test_no_resume_on_disk_has_words_running_together():
+    """Opportunistic: every PDF this machine has produced must still read cleanly."""
+    import glob
+    from applier.tailor.render import squeezed_words
+    pdfs = glob.glob("applications/**/resume.pdf", recursive=True)
+    if not pdfs:
+        pytest.skip("no rendered resumes on this machine")
+    newest = max(pdfs, key=lambda p: __import__("os").path.getmtime(p))
+    bad = squeezed_words(newest)
+    assert not bad, f"{newest} has words a parser will run together: {bad[:2]}"

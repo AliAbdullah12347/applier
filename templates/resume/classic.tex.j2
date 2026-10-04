@@ -28,6 +28,26 @@
 \hyphenpenalty=10000
 \exhyphenpenalty=10000
 \sloppy
+
+%% Interword spaces must stay wide enough to survive text extraction.
+%%
+%% Latin Modern's natural interword space is 0.333em. At the 9pt the autofit
+%% ladder falls back to, that is 3.0pt -- which is exactly pdfminer's default
+%% word-split threshold, and pdfminer is what several real ATS pipelines parse
+%% with. The whole document therefore sat a hair above the point where every
+%% word in it runs into the next one, and any line the justifier shrank at all
+%% fell under: a real skills line extracted as
+%% "SageMath,Galoisfieldarithmetic,finiteprojectivegeometry".
+%%
+%% So the space is widened by a quarter, and its shrink almost entirely
+%% removed. The asymmetry is the point -- a stretched space still reads as a
+%% space, while a shrunk one stops being one, so stretch is left free and
+%% shrink is what gets taken away. Set through the selectfont hook so it
+%% tracks whatever size is current rather than being frozen at the preamble's.
+\AddToHook{selectfont}{%
+  \spaceskip=1.25\fontdimen2\font plus \fontdimen3\font minus 0.15\fontdimen4\font%
+  \xspaceskip=1.25\fontdimen2\font plus 1.5\fontdimen3\font minus 0.15\fontdimen4\font%
+}
 \raggedbottom
 \raggedright
 \setlength{\tabcolsep}{0in}

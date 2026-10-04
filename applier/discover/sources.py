@@ -25,6 +25,7 @@ import io
 import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
@@ -190,6 +191,36 @@ def mine_board_tokens(jobs: list[RawJob]) -> dict[str, set[str]]:
 # --------------------------------------------------------------------------- #
 # direct ATS boards -- full descriptions, freshest data
 # --------------------------------------------------------------------------- #
+# A board token is not a company name. Greenhouse hands back
+# "alphasightsresumedrop" for AlphaSights' campus board, and that string then
+# becomes the company in the tracker, in the artifact directory name, and in
+# anything the cover letter derives from the company field. The board endpoint
+# knows the real name, costs one request, and is cached for the process.
+_BOARD_NAME_NOISE = re.compile(
+    r"\s*(?:(?:campus|university|college|student|global|early|new\s*grad)[\s-]*)*"
+    r"(?:recruiting|recruitment|careers?|jobs?|hiring|talent|"
+    r"resume\s*drop|job\s*board|openings)\s*$", re.I)
+
+
+@lru_cache(maxsize=128)
+def greenhouse_board_name(token: str) -> str:
+    """The employer's own name for a Greenhouse board, or "" if unavailable."""
+    try:
+        with _client() as c:
+            r = c.get(f"https://boards-api.greenhouse.io/v1/boards/{token}")
+        if r.status_code != 200:
+            return ""
+        name = str((r.json() or {}).get("name") or "").strip()
+    except (httpx.HTTPError, ValueError):
+        return ""
+    # "AlphaSights Campus Recruiting" sheds one suffix per pass.
+    prev = None
+    while name and name != prev:
+        prev = name
+        name = _BOARD_NAME_NOISE.sub("", name).strip(" -\u2013\u2014|,")
+    return name
+
+
 def greenhouse_board(token: str) -> Iterator[RawJob]:
     url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
     with _client() as c:
@@ -197,9 +228,10 @@ def greenhouse_board(token: str) -> Iterator[RawJob]:
         if r.status_code != 200:
             return
         data = r.json()
+    company = greenhouse_board_name(token) or token
     for j in data.get("jobs", []):
         yield RawJob(
-            company=token, title=j.get("title", ""),
+            company=company, title=j.get("title", ""),
             location=(j.get("location") or {}).get("name", ""),
             url=j.get("absolute_url", ""), source="greenhouse", ats="greenhouse",
             ats_job_id=str(j.get("id", "")),

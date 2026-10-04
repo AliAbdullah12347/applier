@@ -35,6 +35,22 @@ class Score:
     breakdown: dict = field(default_factory=dict)
 
 
+# "We do not sponsor visas **but will consider applicants with STEM/OPT
+# eligibility**" is one sentence saying two opposite things, and for this
+# candidate only the second half is operative. Reading the first half alone
+# throws away a posting that explicitly invites him to apply.
+#
+# For an internship the question is moot in any case: CPT is the student's own
+# work authorisation, granted by his institution, and is not something the
+# employer sponsors at all. The clause only starts to bite at conversion, and
+# a STEM degree carries three years of OPT before it does.
+#
+# Clearance, citizenship and export control are never qualified like this, so
+# the carve-out deliberately only suppresses *sponsorship* rejections.
+OPT_CARVE_OUT = re.compile(
+    r"\b(?:but|however|though|although|unless|except|while|whilst)\b[^.;]{0,160}?"
+    r"\b(?:stem[\s/-]*opt|opt|cpt|practical training|f-?1)\b", re.I)
+
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower())
 
@@ -46,10 +62,16 @@ def check_gates(job: dict[str, Any], settings: Config, profile: Config,
     g = settings.get("gates", {})
     blob = _norm(f"{job.get('title','')} {job.get('description','')}")
 
+    # A refusal to sponsor that is immediately qualified is not a refusal.
+    carve_out = bool(OPT_CARVE_OUT.search(job.get("description", "") or ""))
+
     # 1. citizenship / clearance / export control -> categorically impossible
     for phrase in g.get("hard_reject_phrases", []):
-        if _norm(phrase) in blob:
-            return GateResult(False, f"requires: {phrase}", "refuses")
+        if _norm(phrase) not in blob:
+            continue
+        if "sponsor" in phrase.lower() and carve_out:
+            continue
+        return GateResult(False, f"requires: {phrase}", "refuses")
 
     # 2. programmes restricted to first/second years
     title = _norm(job.get("title", ""))
@@ -89,6 +111,11 @@ def check_gates(job: dict[str, Any], settings: Config, profile: Config,
         if _norm(phrase) in blob:
             sponsorship = "sponsors"
             break
+    else:
+        if carve_out:
+            # Not sponsorship, but an employer that has thought about OPT and
+            # said yes is a materially better prospect than one that is silent.
+            sponsorship = "opt_ok"
 
     return GateResult(True, "", sponsorship)
 
@@ -195,9 +222,12 @@ def score_job(job: dict[str, Any], settings: Config, profile: Config,
     parts["location"] = weight * 0.20
 
     # --- sponsorship signal (0.20) --- the field that matters most here
-    parts["sponsorship"] = {"sponsors": 0.20, "silent": 0.10, "refuses": 0.0}[gate.sponsorship]
+    parts["sponsorship"] = {"sponsors": 0.20, "opt_ok": 0.17,
+                            "silent": 0.10, "refuses": 0.0}.get(gate.sponsorship, 0.10)
     if gate.sponsorship == "sponsors":
         notes.append("states sponsorship")
+    elif gate.sponsorship == "opt_ok":
+        notes.append("accepts OPT/CPT")
 
     total = round(sum(parts.values()), 4)
     return Score(total, ", ".join(notes) or "weak match", parts)

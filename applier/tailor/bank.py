@@ -403,6 +403,22 @@ FAMILY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
                   "game engine", "real-time 3d")),
     ("research", ("research assistant", "phd", "publication", "laboratory",
                   "dissertation", "peer-reviewed")),
+    # Last, so a specialist qualifier always wins: "Security Consultant" is a
+    # security job. Every phrase here is multi-word for the same reason --
+    # bare "consultant" would capture "Software Engineering Consultant", which
+    # is an engineering job that happens to be billed to a client.
+    #
+    # Without this family, every non-engineering posting fell through to
+    # `default`, which leads with whatever is strongest technically. A client
+    # service role at an expert network therefore received a resume led by
+    # finite-geometry research and Unreal Engine, while the club presidency,
+    # the service desk and the teaching assistantship -- the whole of the
+    # relevant evidence -- sat unselected in the bank.
+    ("client",   ("client service", "client services", "client relations",
+                  "client development", "summer associate", "business analyst",
+                  "customer success", "account manager", "account management",
+                  "business development", "management consulting",
+                  "strategy consulting", "strategy analyst", "client partner")),
 ]
 
 # How many DISTINCT keywords a job description must contain before it may claim
