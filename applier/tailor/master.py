@@ -146,7 +146,13 @@ def is_literal_numeral(tok: str, before: str = "") -> bool:
     t = tok.strip().rstrip(".,;:")
     if not t:
         return True
-    if NUMERAL_SKIP.match(t.replace(",", "")):
+    # The comma is load-bearing: a year is never written with a thousands
+    # separator, so "1,900 lines" is a count and "1900" may be a year. The
+    # separator used to be stripped before this test, which read "1,900" as a
+    # year and kept it out of the ledger entirely -- meaning that figure could
+    # never be corrected or retired in one place, which is the single thing
+    # the ledger exists to guarantee.
+    if "," not in t and NUMERAL_SKIP.match(t):
         return True
     # A version number is part of a product's name, not a measurement, so
     # "Unreal Engine 5.3" and "Python 3.11" stay literal rather than filling

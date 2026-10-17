@@ -485,3 +485,31 @@ def test_no_resume_on_disk_has_words_running_together():
     newest = max(pdfs, key=lambda p: __import__("os").path.getmtime(p))
     bad = squeezed_words(newest)
     assert not bad, f"{newest} has words a parser will run together: {bad[:2]}"
+
+
+# --------------------------------------------------------------------------- #
+# a count that looks like a year
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("tok,before,literal", [
+    ("1,900", "about ", False),     # a count. Was read as the year 1900.
+    ("1900", "in ", True),          # genuinely ambiguous; left literal.
+    ("2026", "May ", True),
+    ("5", "across ", True),         # trivial count
+    ("5.3", "Unreal Engine ", True),  # version number
+    ("57,820", "of ", False),
+    ("12,344", "of ", False),
+])
+def test_a_comma_grouped_number_is_never_a_year(tok, before, literal):
+    """The thousands separator is the whole signal.
+
+    The separator used to be stripped before the year test, so "1,900 lines"
+    matched the year pattern and never reached the claims ledger. A figure
+    outside the ledger cannot be corrected or retired in one place, which is
+    the single thing the ledger exists to guarantee -- so the number would
+    have sat on resumes with nothing able to withdraw it.
+
+    "1900" without a separator stays literal: that one really is ambiguous,
+    and guessing wrong in that direction only costs a ledger entry.
+    """
+    from applier.tailor.master import is_literal_numeral
+    assert is_literal_numeral(tok, before) is literal

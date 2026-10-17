@@ -103,6 +103,26 @@ def sh(*args: str) -> str:
 
 def tracked_files() -> list[str]:
     return [f for f in sh("git", "ls-files").split("\n") if f.strip()]
+def untracked_files() -> list[str]:
+    """Files git would add on the next `git add -A`.
+
+    Not tracked yet, so `git ls-files` cannot see them -- which is exactly how
+    a private value reached this repository twice. The sequence that does it
+    is the ordinary one: write a new file, run the audit, watch it pass,
+    commit. The audit passed because the only file worth reading was the one
+    file invisible to it.
+
+    Ignored paths are excluded by --exclude-standard, so the local-only bank,
+    profile and database stay out of this as they should.
+    """
+    out = sh("git", "ls-files", "--others", "--exclude-standard")
+    return [f for f in out.split("\n") if f.strip()]
+
+
+def scannable_files() -> list[str]:
+    """Everything already published, plus everything about to be."""
+    return tracked_files() + untracked_files()
+
 
 
 class Audit:
@@ -119,9 +139,9 @@ class Audit:
 
     # ------------------------------------------------------------------ #
     def scan_tracked(self) -> None:
-        print("1. secrets and personal data in tracked files")
-        files = tracked_files()
-        print(f"   scanning {len(files)} tracked file(s)")
+        print("1. secrets and personal data in tracked and new files")
+        files = scannable_files()
+        print(f"   scanning {len(files)} file(s)")
         for f in files:
             if f in SELF:
                 continue
@@ -187,7 +207,7 @@ class Audit:
 
     def check_templates(self) -> None:
         print("5. template hygiene")
-        for f in tracked_files():
+        for f in scannable_files():
             if ".example." not in f:
                 continue
             self.checks += 1
@@ -228,7 +248,7 @@ class Audit:
     }
 
     def check_profile_values_absent(self) -> None:
-        print("6. personal profile values in tracked files")
+        print("6. personal profile values in tracked and new files")
         profile = ROOT / "config" / "profile.yaml"
         if not profile.exists():
             print("   no local profile.yaml — skipped")
@@ -277,7 +297,11 @@ class Audit:
         if not needles:
             return
 
-        for f in tracked_files():
+        # Label the two cases apart: one is already published, the other is
+        # a commit away. Calling an untracked file TRACKED would send you
+        # looking through history for something that never reached it.
+        already = set(tracked_files())
+        for f in scannable_files():
             path = ROOT / f
             if not path.is_file() or f in SELF:
                 continue
@@ -295,7 +319,8 @@ class Audit:
                 else:
                     hit = needle in text
                 if hit:
-                    self.fail(f"TRACKED {f} contains your private "
+                    where = "TRACKED" if f in already else "ABOUT TO BE COMMITTED:"
+                    self.fail(f"{where} {f} contains your private "
                               f"{key!r} value from profile.yaml: {needle[:48]!r}")
 
     # ------------------------------------------------------------------ #
@@ -314,7 +339,7 @@ class Audit:
             for f in self.failures:
                 print(f"  ! {f}")
         else:
-            print("PASS — no secrets or personal data in tracked files or history")
+            print("PASS — no secrets or personal data in tracked, new, or historical files")
         if self.warnings:
             print(f"\n{len(self.warnings)} warning(s):")
             for w in self.warnings:
