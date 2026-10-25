@@ -397,7 +397,7 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         )
         if submitted:
             db.run("UPDATE jobs SET status='applied' WHERE id=?", (job_id,))
-            _bump_cap(db, job)
+            _bump_cap(db, job, settings)
             db.log("applied", f"{job['company']} — {job['title']}", job_id=job_id)
 
         return (f"{'Submitted' if submitted else 'Filled but not submitted'}: "
@@ -413,8 +413,17 @@ def _execute_application(job: dict, settings: Config, profile: Config,
             sess.close()
 
 
-def _bump_cap(db: Database, job: dict) -> None:
-    dom = (job.get("company_domain") or "").lower()
+def _bump_cap(db: Database, job: dict, settings: Config | None = None) -> None:
+    """Record one application against the employer's cap.
+
+    Keyed the same way check_caps looks it up, or the gate would read a row
+    this never wrote: an ATS-hosted posting counted against
+    "job-boards.greenhouse.io" while the cap was checked against "optiver.com".
+    """
+    from .score.gates import cap_key_for
+
+    caps = (settings.get("gates.application_caps", {}) or {}) if settings else {}
+    dom = (cap_key_for(job, caps) or job.get("company_domain") or "").lower()
     if not dom:
         return
     db.run(

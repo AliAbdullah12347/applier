@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS meta (
 -- ----------------------------------------------------------------- jobs ----
 CREATE TABLE IF NOT EXISTS jobs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    fingerprint     TEXT NOT NULL UNIQUE,   -- company+title+location, normalised
+    fingerprint     TEXT NOT NULL UNIQUE,   -- identity: ATS id, else canonical URL
+    weak_key        TEXT,                   -- resemblance: company+title+location
     source          TEXT NOT NULL,          -- simplify | greenhouse | lever | manual | ...
     ats             TEXT,                   -- greenhouse | lever | ashby | workday | unknown
     ats_job_id      TEXT,
@@ -236,13 +237,38 @@ class Database:
         with self._init_lock:
             if not self._ready:
                 conn.executescript(SCHEMA)
+                prev = conn.execute(
+                    "SELECT value FROM meta WHERE key='schema_version'").fetchone()
                 conn.execute(
                     "INSERT INTO meta(key,value) VALUES('schema_version',?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                     (str(SCHEMA_VERSION),),
                 )
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+                if "weak_key" not in cols:
+                    conn.execute("ALTER TABLE jobs ADD COLUMN weak_key TEXT")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_weak ON jobs(weak_key)")
                 self._ready = True
+                self._pending_merge = bool(prev) and int(prev[0]) < 2
+                self._pending_backfill = True
         self._local.conn = conn
+        # Done after the connection is on the thread, because the merge issues
+        # ordinary queries through it.
+        if getattr(self, "_pending_backfill", False):
+            self._pending_backfill = False
+            try:
+                self._backfill_weak_keys()
+            except Exception:
+                pass
+        if getattr(self, "_pending_merge", False):
+            self._pending_merge = False
+            try:
+                n = self._merge_duplicate_jobs()
+                if n:
+                    print(f"  merged {n} duplicate job row(s) from an older database",
+                          flush=True)
+            except Exception:
+                pass
         return conn
 
     @property
@@ -286,14 +312,82 @@ class Database:
             (now(), kind, job_id, level, message, json.dumps(data, default=str) if data else None),
         )
 
+    # Fields that describe a posting rather than identify it. When a posting is
+    # recognised, these are refreshed -- a corrected company name or an edited
+    # title should improve the row we already have.
+    _MUTABLE = ("weak_key", "company", "company_domain", "title", "location", "country",
+                "remote", "description", "season", "role_kind", "posted_at",
+                "url", "apply_url", "fingerprint", "source", "ats", "ats_job_id")
+
+    def _find_job(self, job: dict[str, Any]) -> int | None:
+        """The same posting, however it is spelled this time.
+
+        Identity, strongest first:
+
+          1. the ATS's own id for it. An employer renaming itself on its board
+             does not change this.
+          2. the canonical URL, with tracking parameters removed.
+          3. company + title + location, which is what this used to use alone.
+
+        (3) is not an identity, it is a guess -- and acting on it alone was a
+        real defect. Correcting a company name from "alphasightsresumedrop" to
+        "AlphaSights" changed the fingerprint, so the next sighting inserted a
+        second row for a posting already in the table. Applications dedupe by
+        job_id, so a duplicate row defeats the one check standing between
+        autonomous mode and applying to the same job twice.
+        """
+        ats, ats_id = job.get("ats"), str(job.get("ats_job_id") or "")
+        if ats and ats not in ("", "unknown") and ats_id:
+            # Authoritative, and deliberately without a fallback. Two postings
+            # from the same board with different ids ARE different postings,
+            # even when company, title and location all match -- a firm
+            # advertising the same role in two cities is the ordinary case.
+            # Falling through to the fingerprint here merged them, which is
+            # the worse direction to fail: a duplicate row is visible, a
+            # swallowed opening is not.
+            row = self.one("SELECT id FROM jobs WHERE ats=? AND ats_job_id=?",
+                           (ats, ats_id))
+            if row:
+                return int(row["id"])
+            # No early return. An identified posting still has to be able to
+            # fold onto an unidentified row for the same job -- an aggregator
+            # lists it with its own URL and no id, the board lists it with an
+            # id, and they are one job. The resemblance step below accepts
+            # that and refuses the case where both rows are identified and
+            # disagree, which is two openings on one team.
+
+        row = self.one("SELECT id FROM jobs WHERE fingerprint=?", (job["fingerprint"],))
+        if row:
+            return int(row["id"])
+
+        # Resemblance, accepted only against a row that has no stable id of its
+        # own to contradict it. This is how an aggregator's copy of a listing
+        # folds onto the board's copy; refusing it when both rows carry an ATS
+        # id is what stops two openings on one team collapsing into one.
+        weak = job.get("weak_key")
+        if weak:
+            for cand in self.q(
+                    "SELECT id, ats, ats_job_id FROM jobs WHERE weak_key=? ORDER BY id",
+                    (weak,)):
+                their_ats = (cand["ats"] or "").lower()
+                their_id = str(cand["ats_job_id"] or "")
+                if their_ats and their_ats != "unknown" and their_id and ats_id \
+                        and (their_ats, their_id) != (str(ats or "").lower(), ats_id):
+                    continue            # both identified, and they disagree
+                return int(cand["id"])
+        return None
+
     def upsert_job(self, job: dict[str, Any]) -> int:
-        """Insert, or refresh last_seen_at if we have seen this posting before."""
-        existing = self.one("SELECT id FROM jobs WHERE fingerprint=?", (job["fingerprint"],))
-        if existing:
-            self.run("UPDATE jobs SET last_seen_at=? WHERE id=?", (now(), existing["id"]))
-            return int(existing["id"])
+        """Insert, or refresh an existing posting however it is spelled today."""
+        existing = self._find_job(job)
+        if existing is not None:
+            sets = ",".join(f"{c}=?" for c in self._MUTABLE if c in job)
+            vals = [job[c] for c in self._MUTABLE if c in job]
+            self.run(f"UPDATE jobs SET {sets}{',' if sets else ''}last_seen_at=? WHERE id=?",
+                     tuple(vals) + (now(), existing))
+            return existing
         cols = [
-            "fingerprint", "source", "ats", "ats_job_id", "company", "company_domain",
+            "fingerprint", "weak_key", "source", "ats", "ats_job_id", "company", "company_domain",
             "title", "location", "country", "remote", "url", "apply_url", "description",
             "season", "role_kind", "posted_at",
         ]
@@ -304,6 +398,59 @@ class Database:
             tuple(vals) + (now(), now()),
         )
         return int(cur.lastrowid)
+
+    def _backfill_weak_keys(self) -> int:
+        """Give older rows the resemblance key they were written without."""
+        from .discover.sources import fingerprint as _weak
+
+        rows = self.q("SELECT id, company, title, location FROM jobs "
+                      "WHERE weak_key IS NULL OR weak_key = ''")
+        for r in rows:
+            self.run("UPDATE jobs SET weak_key=? WHERE id=?",
+                     (_weak(r["company"] or "", r["title"] or "", r["location"] or ""),
+                      int(r["id"])))
+        return len(rows)
+
+    def _merge_duplicate_jobs(self) -> int:
+        """Fold rows that are the same posting onto one id. Runs once.
+
+        Only ever reached for databases written before the identity fix. The
+        keeper is whichever row an application already points at, because that
+        is the row with history attached; otherwise the earliest sighting.
+        """
+        from .discover.sources import canonical_url
+
+        groups: dict[str, list[int]] = {}
+        for row in self.q("SELECT id, ats, ats_job_id, url FROM jobs ORDER BY id"):
+            ats, ats_id = row["ats"], str(row["ats_job_id"] or "")
+            if ats and ats not in ("", "unknown") and ats_id:
+                key = f"ats:{ats}:{ats_id}"
+            else:
+                key = f"url:{canonical_url(row['url'] or '')}"
+            if not key.endswith(":"):
+                groups.setdefault(key, []).append(int(row["id"]))
+
+        merged = 0
+        for ids in groups.values():
+            if len(ids) < 2:
+                continue
+            with_app = {int(r["job_id"]) for r in
+                        self.q("SELECT job_id FROM applications WHERE job_id IN "
+                               f"({','.join('?' * len(ids))})", tuple(ids))}
+            keeper = min(with_app) if with_app else min(ids)
+            losers = [i for i in ids if i != keeper]
+            for loser in losers:
+                # applications has UNIQUE(job_id): move the row only if the
+                # keeper has none, otherwise the loser's row is the duplicate.
+                if loser in with_app and keeper not in with_app:
+                    self.run("UPDATE applications SET job_id=? WHERE job_id=?",
+                             (keeper, loser))
+                    with_app.add(keeper)
+                self.run("UPDATE events SET job_id=? WHERE job_id=?", (keeper, loser))
+                self.run("UPDATE ask_queue SET job_id=? WHERE job_id=?", (keeper, loser))
+                self.run("DELETE FROM jobs WHERE id=?", (loser,))
+                merged += 1
+        return merged
 
     def close(self) -> None:
         """Close this thread's connection. Other threads keep their own."""

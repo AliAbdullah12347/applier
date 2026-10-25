@@ -120,6 +120,58 @@ def check_gates(job: dict[str, Any], settings: Config, profile: Config,
     return GateResult(True, "", sponsorship)
 
 
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+# Suffixes that are part of a company's legal name rather than its identity,
+# stripped before matching so "Optiver US LLC" still matches "optiver.com".
+_LEGAL_SUFFIXES = ("inc", "llc", "ltd", "limited", "corp", "corporation",
+                   "plc", "gmbh", "bv", "sa", "ag", "co", "group", "holdings",
+                   "technologies", "technology", "labs", "us", "usa")
+
+
+def cap_key_for(job: dict[str, Any], caps: dict) -> str | None:
+    """Which configured cap, if any, governs this posting.
+
+    Caps are keyed by employer domain -- "optiver.com", "google.com" -- but a
+    posting hosted on an applicant tracking system carries the ATS's domain,
+    not the employer's. Every Greenhouse posting in the database has
+    company_domain "job-boards.greenhouse.io", 733 of them at the time this
+    was written, so matching on the domain alone meant *none* of these caps
+    had ever fired for an ATS-hosted job.
+
+    That is the expensive direction to get wrong. Optiver's rule is an
+    eight-month global lockout triggered by starting the assessment, and Jump
+    allows one region ever. A cap that silently does not apply is worse than
+    no cap, because it is relied upon.
+
+    So the employer's own name is matched as well. The name is compared on its
+    stem, with legal suffixes removed, and a stem shorter than four characters
+    is required to match exactly -- otherwise a cap on a short domain would
+    swallow every company containing those letters.
+    """
+    domain = (job.get("company_domain") or "").lower()
+    name = _slug(job.get("company", ""))
+    for word in _LEGAL_SUFFIXES:
+        if name.endswith(word) and len(name) > len(word) + 2:
+            name = name[: -len(word)]
+            break
+
+    for key, _rule in caps.items():
+        k = str(key).lower()
+        if domain and k == domain:
+            return key
+        stem = _slug(k.split(".")[0])
+        if not stem or not name:
+            continue
+        if name == stem:
+            return key
+        if len(stem) >= 4 and (name.startswith(stem) or stem in name):
+            return key
+    return None
+
+
 def check_caps(job: dict[str, Any], settings: Config, db) -> GateResult | None:
     """Application caps are the binding constraint, not deadlines.
 
@@ -127,15 +179,17 @@ def check_caps(job: dict[str, Any], settings: Config, db) -> GateResult | None:
     triggers on *starting* an assessment, not failing it. Burning one of these
     slots badly is unrecoverable within a cycle.
     """
-    domain = (job.get("company_domain") or "").lower()
-    if not domain:
-        return None
     caps = settings.get("gates.application_caps", {}) or {}
-    rule = caps.get(domain)
-    if not rule:
+    if not caps:
         return None
+    key = cap_key_for(job, caps)
+    if not key:
+        return None
+    rule = caps[key]
 
-    row = db.one("SELECT * FROM company_caps WHERE domain=?", (domain,))
+    # Counted against the cap's own key, so one employer's quota is one row
+    # however its postings happen to be hosted.
+    row = db.one("SELECT * FROM company_caps WHERE domain=?", (str(key).lower(),))
     if row:
         if row["locked_until"]:
             try:

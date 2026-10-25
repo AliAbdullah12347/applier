@@ -72,8 +72,65 @@ def guess_country(location: str) -> str:
 
 
 def fingerprint(company: str, title: str, location: str) -> str:
+    """The weakest identity: what the posting says about itself.
+
+    Kept for postings that carry nothing better. On its own it is a guess, not
+    an identity -- see identity_fingerprint.
+    """
     raw = "|".join(re.sub(r"\s+", " ", (x or "").strip().lower()) for x in (company, title, location))
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def identity_fingerprint(company: str, title: str, location: str, *,
+                         ats: str = "", ats_job_id: str = "", url: str = "") -> str:
+    """What makes this posting this posting, strongest signal available.
+
+    The jobs table declares `fingerprint ... UNIQUE`, so whatever goes in here
+    is the database's definition of "the same posting". Hashing company, title
+    and location alone made that definition wrong in both directions:
+
+      * renaming a company forked one posting into two rows, and an
+        application dedupes by job_id, so the second row is a second
+        application to the same employer;
+      * and a firm advertising one role in two cities collided into a single
+        row, so the second opening was never seen at all.
+
+    An employer's own id for a posting settles both. A canonical URL settles
+    it when there is no ATS id. Company+title+location is the last resort, and
+    only for postings that carry neither -- which is scraped pages, where the
+    URL is often session-specific.
+    """
+    ats = (ats or "").strip().lower()
+    ats_job_id = str(ats_job_id or "").strip()
+    if ats and ats != "unknown" and ats_job_id:
+        raw = f"ats:{ats}:{ats_job_id}"
+    else:
+        canon = canonical_url(url)
+        raw = f"url:{canon}" if canon else None
+        if raw is None:
+            return fingerprint(company, title, location)
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def canonical_url(url: str) -> str:
+    """The stable part of a posting URL: no tracking, no trailing slash.
+
+    The same posting arrives from several sources wearing different query
+    strings -- `?gh_src=Simplify`, `&utm_source=...` -- and each would
+    otherwise look like a different job.
+    """
+    try:
+        p = urlparse((url or "").strip())
+    except ValueError:
+        return (url or "").strip().lower()
+    host = (p.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    path = (p.path or "").rstrip("/")
+    if not host:
+        return (url or "").strip().lower()
+    port = f":{p.port}" if p.port and p.port not in (80, 443) else ""
+    return f"{p.scheme.lower() or 'https'}://{host}{port}{path}"
 
 
 def domain_from_url(url: str) -> str:
@@ -98,7 +155,10 @@ class RawJob:
 
     def to_row(self) -> dict[str, Any]:
         return {
-            "fingerprint": fingerprint(self.company, self.title, self.location),
+            "fingerprint": identity_fingerprint(
+                self.company, self.title, self.location,
+                ats=self.ats, ats_job_id=self.ats_job_id, url=self.url),
+            "weak_key": fingerprint(self.company, self.title, self.location),
             "source": self.source, "ats": self.ats, "ats_job_id": self.ats_job_id,
             "company": self.company, "company_domain": domain_from_url(self.url),
             "title": self.title, "location": self.location,
