@@ -14,15 +14,105 @@ keychain. That way `settings.yaml` stays safe to commit.
 from __future__ import annotations
 
 import os
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def _frozen() -> bool:
+    """True inside a PyInstaller bundle."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def asset_root() -> Path:
+    """Where the program's own files live: templates, examples, the web UI.
+
+    Read-only, and replaced wholesale by an update. Inside a bundle this is
+    the temporary extraction directory, which is correct for things that ship
+    with the program and wrong for anything the user owns.
+    """
+    if _frozen():
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return _REPO
+
+
+def data_root() -> Path:
+    """Where the user's own files live: config, database, artifacts, bank.
+
+    Must outlive the program, so inside a bundle it is a per-user directory
+    rather than anything near the executable -- an app in Program Files or in
+    /Applications cannot write beside itself, and an app unpacked to a temp
+    directory would lose everything on exit.
+
+    APPLIER_HOME overrides it everywhere. That is what makes the whole system
+    testable: a test can point it at a scratch directory and the real profile
+    is never touched.
+    """
+    env = os.environ.get("APPLIER_HOME")
+    if env:
+        return Path(env).expanduser().resolve()
+    if not _frozen():
+        return _REPO
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / "applier"
+
+
+ROOT = data_root()
+ASSETS = asset_root()
 CONFIG_DIR = ROOT / "config"
 DATA_DIR = ROOT / "data"
+
+
+def resolve_asset(rel: str | Path) -> Path:
+    """Find a shipped file, letting the user's own copy win.
+
+    A template edited in the data directory overrides the bundled one, so an
+    update cannot silently discard a customised resume layout -- and a user
+    who has customised nothing simply gets the shipped file.
+    """
+    rel = Path(rel)
+    if rel.is_absolute():
+        return rel
+    mine = ROOT / rel
+    if mine.exists():
+        return mine
+    return ASSETS / rel
+
+
+# Directories that must exist before anything writes to them, and the shipped
+# files a first run seeds them with. Seeding never overwrites: an existing
+# profile or settings file is always the user's and is left exactly as it is.
+_SEED = [
+    ("config/settings.yaml", "config/settings.yaml"),
+    ("config/profile.yaml", "config/profile.example.yaml"),
+    ("config/bank/master_resume.md", "config/bank/master_resume.example.md"),
+    ("config/bank/atoms.yaml", "config/bank/atoms.example.yaml"),
+    ("config/bank/claims.yaml", "config/bank/claims.example.yaml"),
+]
+
+
+def ensure_home() -> Path:
+    """Create the data directory and seed it on first run. Idempotent."""
+    for sub in ("config", "config/bank", "data", "applications", "out", "private"):
+        (ROOT / sub).mkdir(parents=True, exist_ok=True)
+    for dest_rel, src_rel in _SEED:
+        dest = ROOT / dest_rel
+        if dest.exists():
+            continue
+        src = ASSETS / src_rel
+        if src.exists():
+            dest.write_bytes(src.read_bytes())
+    return ROOT
 ENV_PREFIX = "APPLIER__"
 ENV_SEP = "__"
 
@@ -359,6 +449,7 @@ def project_paths() -> dict[str, Path]:
         "data": DATA_DIR,
         "db": DATA_DIR / "applier.db",
         "artifacts": ROOT / "applications",
-        "templates": ROOT / "templates",
+        "templates": resolve_asset("templates"),
         "out": ROOT / "out",
+        "assets": ASSETS,
     }

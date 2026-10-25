@@ -94,9 +94,11 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
     jd = sanitize_job_text(job.get("description") or "")
 
     templates = settings.get("tailor.variants", {})
-    tpl_path = Path(templates.get(variant) or settings.get("tailor.template"))
-    if not tpl_path.is_absolute():
-        tpl_path = Path.cwd() / tpl_path
+    # Resolved against the data directory first and the shipped files second,
+    # never against the working directory: a packaged app is launched from
+    # wherever the shortcut points, which is not where its templates are.
+    from ..config import resolve_asset
+    tpl_path = resolve_asset(templates.get(variant) or settings.get("tailor.template"))
     if not tpl_path.exists():
         raise TailorError(f"Template not found: {tpl_path}")
 

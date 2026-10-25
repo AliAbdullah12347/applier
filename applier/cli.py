@@ -206,6 +206,36 @@ def gui(
 
 
 @app.command()
+def desktop(
+    port: int = typer.Option(8765, help="Port on localhost. Takes the next free one if busy."),
+    verbose: bool = typer.Option(False, "--verbose", help="Log every HTTP request."),
+) -> None:
+    """Open applier in its own window, rather than in a browser tab.
+
+    Same server, same endpoints, same token as `applier gui` -- this is the
+    browser tab with a window frame around it and no address bar. If no window
+    toolkit is available it falls back to your browser and says so.
+    """
+    from .desktop import run
+    raise typer.Exit(run(port=port, verbose=verbose))
+
+
+@app.command(hidden=True)
+def selftest(
+    code: str = typer.Option(..., "--code", help="Python to execute inside this build."),
+) -> None:
+    """Run a snippet inside this interpreter. Used to verify a packaged build.
+
+    A frozen application is a different interpreter with a different module
+    graph, and the parts most likely to be missing are the ones reached by
+    name rather than by import -- the PDF verifier, the provider router, the
+    ATS adapters. There is no way to check those from outside the bundle, so
+    the bundle is asked directly.
+    """
+    exec(compile(code, "<selftest>", "exec"), {"__name__": "__selftest__"})
+
+
+@app.command()
 def extension() -> None:
     """Where the Chrome extension lives, and how to pair it.
 
