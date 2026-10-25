@@ -911,6 +911,145 @@ def put_settings(body, **_kw) -> dict:
             "autonomy": {"level": autonomy.current(settings)}}
 
 
+# --------------------------------------------------------------------------- #
+# the model chain
+# --------------------------------------------------------------------------- #
+# Only `llm.primary.*` was editable, and only one scalar at a time. The
+# fallback chain and the per-task overrides -- the two things you actually
+# reach for when a model is retired -- meant opening a YAML file, which is the
+# moment a GUI stops being the way you run the system.
+#
+# Every value here is a name or a number. An API key is never in this payload
+# in either direction: what travels is `api_key_env`, the NAME of the
+# environment variable, and a boolean saying whether that name currently
+# resolves to something. The key itself only ever goes through PUT /api/secrets
+# and into the OS keychain.
+MODEL_FIELDS: dict[str, type] = {
+    "provider": str,
+    "model": str,
+    "api_key_env": str,
+    "base_url": str,
+    "host": str,
+    "temperature": float,
+    "max_output_tokens": int,
+    "thinking_budget": int,
+    "timeout_s": float,
+}
+
+# A chain longer than this is a configuration mistake rather than resilience:
+# every link is tried before a task is allowed to fail, so twelve dead links
+# is twelve timeouts before the user hears anything.
+MAX_FALLBACKS = 8
+
+
+def _clean_spec(raw: Any, where: str) -> dict:
+    """Validate one link of the chain."""
+    if not isinstance(raw, dict):
+        raise ApiError(f"{where} must be an object")
+    out: dict[str, Any] = {}
+    for k, v in raw.items():
+        if k not in MODEL_FIELDS:
+            raise ApiError(
+                f"{where}: {k!r} is not a model setting. Allowed: "
+                f"{', '.join(sorted(MODEL_FIELDS))}")
+        if v is None or v == "":
+            continue
+        caster = MODEL_FIELDS[k]
+        try:
+            out[k] = caster(v)
+        except (TypeError, ValueError):
+            raise ApiError(f"{where}.{k} must be {caster.__name__}")
+
+    provider = out.get("provider", "")
+    if not provider:
+        raise ApiError(f"{where}: provider is required")
+    from ..llm.router import PROVIDERS
+    if provider not in PROVIDERS:
+        raise ApiError(
+            f"{where}: unknown provider {provider!r}. Built in: "
+            f"{', '.join(sorted(PROVIDERS))}. For anything else use "
+            f"'openai_compatible' with a base_url.")
+    if not out.get("model") and provider != "ollama":
+        raise ApiError(f"{where}: model is required")
+    if provider == "openai_compatible" and not out.get("base_url"):
+        raise ApiError(
+            f"{where}: 'openai_compatible' needs a base_url — it is the one "
+            f"thing it cannot guess.")
+    url = out.get("base_url", "")
+    if url and not str(url).startswith(("http://", "https://")):
+        raise ApiError(f"{where}.base_url must be an http(s) URL")
+    return out
+
+
+def get_models(_body=None, **_kw) -> dict:
+    settings, _ = _cfg()
+    from ..llm.router import PROVIDERS
+
+    def _key_state(spec: dict) -> dict:
+        env = str(spec.get("api_key_env") or "")
+        return {**spec, "api_key_set": bool(env and get_secret(env, required=False))}
+
+    primary = dict(settings.get("llm.primary", {}) or {})
+    fallbacks = [dict(f) for f in (settings.get("llm.fallbacks", []) or [])]
+    return {
+        "primary": _key_state(primary),
+        "fallbacks": [_key_state(f) for f in fallbacks],
+        "task_models": dict(settings.get("llm.task_models", {}) or {}),
+        "providers": sorted(PROVIDERS),
+        "fields": sorted(MODEL_FIELDS),
+        "max_fallbacks": MAX_FALLBACKS,
+        "source": settings.source,
+    }
+
+
+def put_models(body, **_kw) -> dict:
+    """Replace the chain. Validated before anything is written.
+
+    Whole-structure replacement rather than dotted patching, because a chain
+    is an ordered list: "set llm.fallbacks.2.model" is not a thing anyone can
+    reason about, and reordering through dotted keys is worse.
+    """
+    body = body or {}
+    updates: dict[str, Any] = {}
+
+    if "primary" in body:
+        updates["llm.primary"] = _clean_spec(body["primary"], "primary")
+
+    if "fallbacks" in body:
+        raw = body["fallbacks"]
+        if not isinstance(raw, list):
+            raise ApiError("fallbacks must be a list")
+        if len(raw) > MAX_FALLBACKS:
+            raise ApiError(f"at most {MAX_FALLBACKS} fallbacks; every link is "
+                           f"tried before a task fails")
+        updates["llm.fallbacks"] = [
+            _clean_spec(f, f"fallbacks[{i}]") for i, f in enumerate(raw)]
+
+    if "task_models" in body:
+        raw = body["task_models"]
+        if not isinstance(raw, dict):
+            raise ApiError("task_models must be an object")
+        clean: dict[str, Any] = {}
+        for task, val in raw.items():
+            if not isinstance(task, str) or not task:
+                raise ApiError("task_models keys must be task names")
+            if isinstance(val, str):
+                clean[task] = val
+            elif isinstance(val, dict):
+                clean[task] = _clean_spec(val, f"task_models.{task}")
+            else:
+                raise ApiError(
+                    f"task_models.{task} must be a model name, 'primary', or "
+                    f"an object overriding part of the primary spec")
+        updates["llm.task_models"] = clean
+
+    if not updates:
+        raise ApiError("nothing to change: send primary, fallbacks or task_models")
+
+    patch_settings(updates)
+    return {"ok": True, **get_models()}
+
+
 def set_autonomy(body, **_kw) -> dict:
     level = (body or {}).get("level")
     if level not in autonomy.LEVELS:

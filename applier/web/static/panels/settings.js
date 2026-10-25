@@ -254,7 +254,7 @@ async function renderModel(host, ctx) {
 
   /* --------------------------------------------------------------- model */
   const modelCard = el('div', { class: 'card' },
-    el('h2', {}, 'Model', el('span', { class: 'sub' }, 'primary; the fallbacks are edited in settings.yaml')),
+    el('h2', {}, 'Model', el('span', { class: 'sub' }, 'the primary link in detail; the whole chain is below')),
     el('div', { class: 'banner warn u-mb-14px' },
       el('span', {},
         'Some model names are listed by the provider and still return 404 when you call them. '
@@ -275,7 +275,7 @@ async function renderModel(host, ctx) {
       { min: 0 }),
   );
 
-  host.append(secCard, modelCard, doctorCard());
+  host.append(secCard, modelCard, await chainCard(ctx), doctorCard());
 }
 
 function setSecret(name, ctx) {
@@ -343,6 +343,162 @@ function doctorCard() {
 }
 
 /* --------------------------------------------------------------- limits -- */
+/* The whole model chain: primary, every fallback, and the per-task overrides.
+ *
+ * Only `llm.primary.model` used to be reachable from here, which meant that
+ * the two things you reach for when a model is retired -- adding a fallback
+ * and pointing one task somewhere else -- required opening a YAML file. That
+ * is the moment a GUI stops being the way you run the system.
+ *
+ * Nothing on this screen is a secret. What is edited is the NAME of the
+ * environment variable holding a key; the key itself is set in the card above
+ * and lives in the OS keychain. */
+async function chainCard(ctx) {
+  const card = el('div', { class: 'card' },
+    el('h2', {}, 'Model chain',
+      el('span', { class: 'sub' }, 'tried in order, top first')));
+
+  let data;
+  try {
+    data = await get('/api/models');
+  } catch (e) {
+    card.appendChild(el('div', { class: 'banner bad' }, e.message));
+    return card;
+  }
+
+  // Edited in memory and sent in one PUT, because a chain is an ordered list:
+  // saving each row as you type would leave the chain briefly inconsistent.
+  const state = {
+    primary: { ...data.primary },
+    fallbacks: data.fallbacks.map((f) => ({ ...f })),
+    task_models: { ...data.task_models },
+  };
+  delete state.primary.api_key_set;
+  state.fallbacks.forEach((f) => delete f.api_key_set);
+
+  const body = el('div', {});
+
+  const field = (spec, key, placeholder, width) => el('input', {
+    class: `inp ${width || ''}`,
+    value: spec[key] || '',
+    placeholder,
+    oninput: (e) => { spec[key] = e.target.value.trim(); },
+  });
+
+  const providerSelect = (spec) => {
+    const sel = el('select', { class: 'inp u-minw-120px' });
+    for (const p of data.providers) {
+      sel.appendChild(el('option', { value: p, selected: spec.provider === p || null }, p));
+    }
+    sel.addEventListener('change', (e) => { spec.provider = e.target.value; draw(); });
+    return sel;
+  };
+
+  function rowFor(spec, label, onRemove) {
+    const needsUrl = spec.provider === 'openai_compatible';
+    return el('tr', {},
+      el('td', { class: 'shrink mono dim small' }, label),
+      el('td', { class: 'shrink' }, providerSelect(spec)),
+      el('td', {}, field(spec, 'model', 'model name')),
+      el('td', { class: 'shrink' }, field(spec, 'api_key_env', 'KEY_ENV_VAR')),
+      el('td', {}, field(spec, 'base_url',
+        needsUrl ? 'https://… (required)' : 'optional override')),
+      el('td', { class: 'shrink right' },
+        onRemove
+          ? el('button', { class: 'btn btn-sm', onclick: onRemove }, 'Remove')
+          : pill('primary', 'ok')),
+    );
+  }
+
+  function draw() {
+    clear(body);
+
+    const tb = el('tbody');
+    tb.appendChild(rowFor(state.primary, 'primary', null));
+    state.fallbacks.forEach((f, i) => {
+      tb.appendChild(rowFor(f, String(i + 1), () => {
+        state.fallbacks.splice(i, 1);
+        draw();
+      }));
+    });
+
+    body.appendChild(el('table', {},
+      el('thead', {}, el('tr', {},
+        el('th', { class: 'shrink' }, '#'),
+        el('th', { class: 'shrink' }, 'Provider'),
+        el('th', {}, 'Model'),
+        el('th', { class: 'shrink' }, 'Key env'),
+        el('th', {}, 'Endpoint'),
+        el('th', { class: 'shrink' }, ''))),
+      tb));
+
+    body.appendChild(el('div', { class: 'row u-mt-10px' },
+      el('button', {
+        class: 'btn btn-sm',
+        disabled: state.fallbacks.length >= data.max_fallbacks || null,
+        onclick: () => {
+          state.fallbacks.push({ ...state.primary });
+          draw();
+        },
+      }, 'Add fallback'),
+      el('span', { class: 'dim small' },
+        `${state.fallbacks.length}/${data.max_fallbacks} — every link is tried `
+        + 'before a task is allowed to fail.')));
+
+    /* ------------------------------------------------- per-task overrides */
+    const tasks = Object.keys(state.task_models);
+    if (tasks.length) {
+      body.appendChild(el('h3', { class: 'u-mt-16px u-mb-8px' }, 'Per-task model'));
+      const tt = el('tbody');
+      for (const t of tasks) {
+        tt.appendChild(el('tr', {},
+          el('td', { class: 'shrink mono small' }, t),
+          el('td', {}, el('input', {
+            class: 'inp',
+            value: state.task_models[t] || 'primary',
+            placeholder: 'primary',
+            oninput: (e) => {
+              state.task_models[t] = e.target.value.trim() || 'primary';
+            },
+          }))));
+      }
+      body.appendChild(el('table', {}, tt));
+      body.appendChild(el('div', { class: 'dim small u-mt-8px' },
+        "'primary' uses the chain above. Any other value overrides just the "
+        + 'model name for that task, keeping the same provider and key.'));
+    }
+
+    body.appendChild(el('div', { class: 'row u-mt-12px' },
+      el('button', {
+        class: 'btn btn-primary',
+        onclick: async (e) => {
+          e.target.disabled = true;
+          try {
+            await put('/api/models', state);
+            toast('Model chain saved', 'ok');
+            if (ctx && ctx.refresh) ctx.refresh();
+          } catch (err) {
+            toast(err.message, 'bad');
+            e.target.disabled = false;
+          }
+        },
+      }, 'Save chain'),
+      el('span', { class: 'dim small' },
+        'Checked before anything is written — an unknown provider or a '
+        + 'missing endpoint is refused with the reason.')));
+
+    body.appendChild(el('p', { class: 'muted small u-mt-12px' },
+      'Any vendor exposing an OpenAI-compatible /chat/completions works '
+      + "without a code change: choose provider 'openai_compatible' and give "
+      + 'its endpoint. That is what keeps this working when today\'s models '
+      + 'are retired.'));
+  }
+
+  draw();
+  card.appendChild(body);
+  return card;
+}
+
 async function renderLimits(host) {
   loading(host, 'Loading the caps…');
   let s;

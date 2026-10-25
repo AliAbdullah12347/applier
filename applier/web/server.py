@@ -124,6 +124,8 @@ route("POST", "/api/outreach/harvest")(api.start_harvest)
 route("POST", "/api/outreach/draft")(api.start_draft)
 route("POST", "/api/outreach/{contact_id}/stage")(lambda b, contact_id, **k: api.set_contact_stage(b, contact_id=_int(contact_id), **k))
 
+route("GET", "/api/models")(api.get_models)
+route("PUT", "/api/models")(api.put_models)
 route("GET", "/api/settings")(api.get_settings)
 route("PUT", "/api/settings")(api.put_settings)
 route("POST", "/api/autonomy")(api.set_autonomy)

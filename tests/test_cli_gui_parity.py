@@ -48,6 +48,7 @@ PARITY: dict[str, tuple[str, ...]] = {
     "bank-preview": ("POST /api/bank/preview",),
     "config-set-key": ("PUT /api/secrets",),
     "config-show":    ("GET /api/settings",),
+    "config-models":  ("GET /api/models", "PUT /api/models"),
 }
 
 # GUI-only routes, and why the CLI does not need them.

@@ -323,3 +323,5 @@ img.shot { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; }
 .u-w-84px { width: 84px; }
 .u-w-90px { width: 90px; }
 .u-w-auto { width: auto; }
+.u-mt-16px { margin-top: 16px; }
+.u-minw-120px { min-width: 120px; }

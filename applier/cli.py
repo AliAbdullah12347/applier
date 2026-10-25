@@ -772,6 +772,93 @@ def config_show() -> None:
     con.print(_y.safe_dump(redact(settings.raw), sort_keys=False, allow_unicode=True))
 
 
+@config_app.command("models")
+def config_models(
+    set_primary: str = typer.Option(
+        None, "--primary", metavar="PROVIDER/MODEL",
+        help="Switch the primary model, e.g. openai/gpt-5 or gemini/gemini-3.5-flash."),
+    base_url: str = typer.Option(
+        None, "--base-url",
+        help="Endpoint for the primary, required for provider 'openai_compatible'."),
+    key_env: str = typer.Option(
+        None, "--key-env", help="Environment variable holding the primary's API key."),
+    task: str = typer.Option(
+        None, "--task", help="Task to override, e.g. cover_letter."),
+    task_model: str = typer.Option(
+        None, "--task-model", help="Model for --task, or 'primary' to clear it."),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Show or change the model chain: primary, fallbacks and per-task overrides.
+
+    With no options it prints the chain. API keys are never shown or accepted
+    here -- only the NAME of the environment variable holding one, and whether
+    that name currently resolves. Use `applier config set-key` for the secret
+    itself.
+    """
+    from .web import api as _api
+
+    updates: dict = {}
+    if set_primary or base_url or key_env:
+        current = dict(_api.get_models()["primary"])
+        current.pop("api_key_set", None)
+        if set_primary:
+            if "/" not in set_primary:
+                con.print("[red]--primary must be PROVIDER/MODEL[/red], "
+                          "e.g. openai/gpt-5")
+                raise typer.Exit(1)
+            provider, _, model = set_primary.partition("/")
+            current["provider"], current["model"] = provider.strip(), model.strip()
+        if base_url:
+            current["base_url"] = base_url.strip()
+        if key_env:
+            current["api_key_env"] = key_env.strip()
+        updates["primary"] = current
+
+    if task or task_model:
+        if not (task and task_model):
+            con.print("[red]--task and --task-model go together[/red]")
+            raise typer.Exit(1)
+        tasks = dict(_api.get_models()["task_models"])
+        tasks[task] = task_model
+        updates["task_models"] = tasks
+
+    try:
+        data = _api.put_models(updates) if updates else _api.get_models()
+    except Exception as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    if json_out:
+        import json as _j
+        con.print_json(_j.dumps({k: v for k, v in data.items() if k != "ok"}))
+        return
+
+    if updates:
+        con.print("[green]saved[/green]\n")
+
+    t = Table(title="model chain", box=None, pad_edge=False)
+    for col in ("#", "provider", "model", "key env", "key", "endpoint"):
+        t.add_column(col)
+    chain = [("primary", data["primary"])] + [
+        (str(i + 1), f) for i, f in enumerate(data["fallbacks"])]
+    for label, spec in chain:
+        t.add_row(label, str(spec.get("provider", "")), str(spec.get("model", "")),
+                  str(spec.get("api_key_env", "")),
+                  "[green]set[/green]" if spec.get("api_key_set") else "[red]unset[/red]",
+                  str(spec.get("base_url", "") or "default"))
+    con.print(t)
+
+    overrides = {k: v for k, v in (data.get("task_models") or {}).items()
+                 if v != "primary"}
+    if overrides:
+        con.print("\n[bold]per-task overrides[/bold]")
+        for k, v in overrides.items():
+            con.print(f"  {k}: {v}")
+    con.print(f"\n[dim]providers: {', '.join(data['providers'])}[/dim]")
+    con.print("[dim]Any vendor with an OpenAI-compatible endpoint works without a "
+              "code change: provider 'openai_compatible' plus --base-url.[/dim]")
+
+
 def main() -> None:
     try:
         app()

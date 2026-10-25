@@ -237,7 +237,9 @@ def _post(url: str, *, headers: dict, payload: dict, timeout: float) -> dict:
 
 def _call_gemini(spec: dict, system: str, user: str, key: str, want_json: bool) -> LLMResponse:
     model = spec["model"]
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    base = str(spec.get("base_url")
+               or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+    url = f"{base}/models/{model}:generateContent"
     gen: dict[str, Any] = {
         "temperature": spec.get("temperature", 0.3),
         "maxOutputTokens": spec.get("max_output_tokens", 4096),
@@ -296,6 +298,9 @@ def _call_openai_compatible(spec: dict, system: str, user: str, key: str,
     }
     if want_json:
         payload["response_format"] = {"type": "json_object"}
+    # A spec-level base_url wins, so a proxy, a self-hosted gateway or a
+    # vendor that changes its path can be pointed at from settings.yaml.
+    base_url = str(spec.get("base_url") or base_url).rstrip("/")
     data = _post(f"{base_url}/chat/completions",
                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                  payload=payload, timeout=spec.get("timeout_s", 90))
@@ -319,7 +324,8 @@ def _call_anthropic(spec: dict, system: str, user: str, key: str, want_json: boo
         "system": system,
         "messages": [{"role": "user", "content": user}],
     }
-    data = _post("https://api.anthropic.com/v1/messages",
+    base = str(spec.get("base_url") or "https://api.anthropic.com/v1").rstrip("/")
+    data = _post(f"{base}/messages",
                  headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                           "Content-Type": "application/json"},
                  payload=payload, timeout=spec.get("timeout_s", 90))
@@ -347,6 +353,19 @@ def _call_ollama(spec: dict, system: str, user: str, _key: str, want_json: bool)
                        data.get("prompt_eval_count", 0), data.get("eval_count", 0), data)
 
 
+def _required_base_url(spec: dict) -> str:
+    """The base_url for a provider that has no built-in default."""
+    url = str(spec.get("base_url") or "").strip().rstrip("/")
+    if not url:
+        raise LLMError(
+            "provider 'openai_compatible' needs a base_url in settings.yaml, "
+            "e.g. base_url: \"https://api.example.com/v1\" — it is the one "
+            "thing this provider cannot guess.")
+    if not url.startswith(("http://", "https://")):
+        raise LLMError(f"base_url must be an http(s) URL, got {url!r}")
+    return url
+
+
 PROVIDERS: dict[str, Callable[..., LLMResponse]] = {
     "gemini": _call_gemini,
     "anthropic": _call_anthropic,
@@ -365,6 +384,23 @@ PROVIDERS: dict[str, Callable[..., LLMResponse]] = {
         s, sy, u, k, j, "https://api.cerebras.ai/v1", "cerebras"),
     "deepseek": lambda s, sy, u, k, j: _call_openai_compatible(
         s, sy, u, k, j, "https://api.deepseek.com/v1", "deepseek"),
+    # The escape hatch, and the reason this table does not need to be complete.
+    #
+    # Most vendors ship an OpenAI-compatible /chat/completions endpoint, so a
+    # provider that does not exist yet can be reached from settings.yaml alone:
+    #
+    #     llm:
+    #       primary:
+    #         provider: "openai_compatible"
+    #         base_url: "https://api.whatever.example/v1"
+    #         model: "their-model-name"
+    #         api_key_env: "WHATEVER_API_KEY"
+    #
+    # Without this, outliving any single vendor means editing Python. The
+    # named entries above stay because they carry the right default URL, not
+    # because they are the only providers reachable.
+    "openai_compatible": lambda s, sy, u, k, j: _call_openai_compatible(
+        s, sy, u, k, j, _required_base_url(s), str(s.get("provider") or "custom")),
 }
 
 
@@ -441,7 +477,14 @@ class Router:
             provider = spec.get("provider")
             fn = PROVIDERS.get(provider)
             if not fn:
-                errors.append(f"{provider}: unknown provider")
+                # Name what exists and name the way out. A vendor that did not
+                # exist when this was written is the expected case, not an
+                # error, and the message should say which key solves it.
+                errors.append(
+                    f"{provider}: unknown provider. Built in: "
+                    f"{', '.join(sorted(PROVIDERS))}. Any vendor with an "
+                    f"OpenAI-compatible endpoint works without code changes — "
+                    f"set provider: \"openai_compatible\" and base_url.")
                 continue
             key = ""
             if provider != "ollama":
