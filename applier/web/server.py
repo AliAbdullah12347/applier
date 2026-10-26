@@ -84,6 +84,7 @@ def _int(v):
 route("GET", "/api/state")(api.get_state)
 route("GET", "/api/events")(api.get_events)
 route("POST", "/api/doctor")(api.run_doctor)
+route("POST", "/api/preflight")(api.run_preflight_api)
 route("GET", "/api/paths")(api.get_paths)
 route("GET", "/api/extension")(api.get_extension)
 route("POST", "/api/audit")(api.run_privacy_audit)

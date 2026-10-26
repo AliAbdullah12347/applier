@@ -386,12 +386,69 @@ def rank(top: int = typer.Option(25, help="How many to display.")) -> None:
 
 
 @app.command()
+def preflight(
+    quick: bool = typer.Option(False, "--quick", help="Skip the render, the model call and the browser."),
+) -> None:
+    """Everything that must hold before leaving this running unattended.
+
+    `doctor` answers "is it installed". This answers "will six hours of this
+    waste a day's application quota", which is a different question: it
+    renders a real PDF, makes a real model call, and starts a real browser.
+    Minutes here against hours there.
+    """
+    settings, profile = _load()
+    from .preflight import run_preflight
+
+    report = run_preflight(settings, profile, deep=not quick)
+    t = Table(title="preflight", box=None, pad_edge=False)
+    for c in ("", "check", "detail"):
+        t.add_column(c)
+    marks = {"ok": "[green]ok[/green]", "warn": "[yellow]warn[/yellow]",
+             "BLOCKED": "[red]BLOCK[/red]"}
+    for c in report.checks:
+        t.add_row(marks[c.state], c.name, c.detail[:74])
+    con.print(t)
+
+    for c in report.checks:
+        if not c.ok and c.fix:
+            con.print(f"\n[dim]{c.name}:[/dim] {c.fix}")
+
+    if report.ok:
+        con.print("\n[bold green]Ready to run unattended.[/bold green]")
+    else:
+        con.print(f"\n[bold red]Not ready[/bold red] — "
+                  f"{len(report.blocking_failures)} blocking problem(s).")
+        raise typer.Exit(1)
+
+
+@app.command()
 def run(
     max_apps: int = typer.Option(0, help="Stop after N applications (0 = use settings cap)."),
     once: bool = typer.Option(False, "--once", help="One cycle then exit."),
+    skip_preflight: bool = typer.Option(
+        False, "--skip-preflight", help="Start even if preflight finds a blocking problem."),
 ) -> None:
     """Autonomous loop: discover, rank, tailor, apply. Leave it running."""
     settings, profile = _load()
+
+    # The whole point of an unattended run is that nobody is watching it, so
+    # the things that would make it useless are checked while someone still
+    # is. Skippable, because a deliberate degraded run is a legitimate
+    # choice -- but it has to be deliberate.
+    if not skip_preflight:
+        from .preflight import run_preflight
+        report = run_preflight(settings, profile, deep=True)
+        if not report.ok:
+            con.print("[red]Preflight failed — not starting.[/red]")
+            for c in report.blocking_failures:
+                con.print(f"  [red]x[/red] {c.name}: {c.detail}")
+                if c.fix:
+                    con.print(f"      {c.fix}")
+            con.print("\n[dim]`applier preflight` for the full report, or "
+                      "--skip-preflight to run anyway.[/dim]")
+            raise typer.Exit(1)
+        con.print("[dim]preflight clear[/dim]")
+
     from .pipeline import autonomous_loop
     autonomous_loop(settings, profile, max_apps=max_apps or None, once=once, console=con)
 

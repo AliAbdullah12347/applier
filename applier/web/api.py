@@ -727,6 +727,15 @@ def list_contacts(_body=None, **_kw) -> dict:
             "pending": sum(1 for c in contacts if c["stage"] == "harvested")}
 
 
+def run_preflight_api(body=None, **_kw) -> dict:
+    """Everything that must hold before an unattended run. Costs a model call."""
+    body = body or {}
+    deep = bool(body.get("deep", True))
+    settings, profile = _cfg()
+    from ..preflight import run_preflight
+    return run_preflight(settings, profile, deep=deep).as_dict()
+
+
 def start_for_job(body=None, **_kw) -> dict:
     """Find people worth contacting about one posting.
 

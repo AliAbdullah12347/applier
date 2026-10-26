@@ -378,6 +378,16 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                             "submit yourself.")
                 sess.click(selector)
                 submitted = True
+                # Written here, not thirty lines further down, because
+                # everything between is housekeeping -- settling the page,
+                # the final screenshot, serialising the audit trail -- and
+                # any of it can throw. When it did, the except clause below
+                # marked this row 'failed', erasing the fact that an employer
+                # had already received the application, and the next run
+                # applied again. A double submission is the worst thing this
+                # system can do, and it would happen exactly when something
+                # had already gone wrong, which is when nobody is looking.
+                _record_submission(db, job, settings)
                 break
             if not sess.click(selector):
                 break
@@ -387,30 +397,48 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         if final_shot:
             shots.append(_rel_artifact(final_shot))
 
-        status = "submitted" if submitted else "ready"
+        # Attach the artifacts. COALESCE and the status guard keep this from
+        # walking back the submission recorded at the moment of the click.
         db.run(
-            "UPDATE applications SET status=?, submitted_at=?, artifact_dir=?, "
+            "UPDATE applications SET status=CASE WHEN status='submitted' "
+            "  THEN 'submitted' ELSE ? END, "
+            "submitted_at=COALESCE(submitted_at, ?), artifact_dir=?, "
             "answers_json=?, screenshots=?, resume_path=? WHERE job_id=?",
-            (status, now() if submitted else None, _rel_artifact(artifact),
-             json.dumps(audit_trail), json.dumps(shots),
+            ("submitted" if submitted else "ready", now() if submitted else None,
+             _rel_artifact(artifact), json.dumps(audit_trail), json.dumps(shots),
              str(resume_path) if resume_path else None, job_id),
         )
-        if submitted:
-            db.run("UPDATE jobs SET status='applied' WHERE id=?", (job_id,))
-            _bump_cap(db, job, settings)
-            db.log("applied", f"{job['company']} — {job['title']}", job_id=job_id)
 
         return (f"{'Submitted' if submitted else 'Filled but not submitted'}: "
                 f"{job['company']} — {job['title']}\n  artifacts: {artifact}")
 
     except Exception as e:
-        db.run("UPDATE applications SET status='failed', failure_reason=? WHERE job_id=?",
+        # Never downgrade a submitted application. Something failing after the
+        # employer has the form is a housekeeping failure, not an unsent
+        # application, and recording it as the latter invites a second one.
+        db.run("UPDATE applications SET status='failed', failure_reason=? "
+               "WHERE job_id=? AND status<>'submitted'",
                (str(e)[:400], job_id))
         db.log("apply_failed", str(e)[:200], job_id=job_id, level="error")
         raise
     finally:
         if settings.get("apply.mode") != "review":
             sess.close()
+
+
+def _record_submission(db: Database, job: dict, settings: Config) -> None:
+    """Mark an application sent, durably, the instant it is sent.
+
+    Four writes that must not be separated from the click by anything that
+    can fail. Each is individually idempotent, so a retry of this function
+    cannot double-count a cap.
+    """
+    job_id = job["id"]
+    db.run("UPDATE applications SET status='submitted', "
+           "submitted_at=COALESCE(submitted_at, ?) WHERE job_id=?", (now(), job_id))
+    db.run("UPDATE jobs SET status='applied' WHERE id=?", (job_id,))
+    _bump_cap(db, job, settings)
+    db.log("applied", f"{job['company']} — {job['title']}", job_id=job_id)
 
 
 def _bump_cap(db: Database, job: dict, settings: Config | None = None) -> None:
