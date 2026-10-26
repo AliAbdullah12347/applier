@@ -73,6 +73,21 @@ CONFIG_DIR = ROOT / "config"
 DATA_DIR = ROOT / "data"
 
 
+def data_path(value: str | Path | None, default: str = "") -> Path:
+    """Resolve a path out of settings against the data directory.
+
+    A relative path in settings.yaml means "inside my applier directory", not
+    "inside whatever directory this was launched from". Those were the same
+    thing until there was a packaged build, and then they were not:
+    double-clicking an executable sets the working directory to its own
+    folder, so `config/bank` pointed at nothing -- and running the packaged
+    app from a checkout made it silently read that checkout's bank instead of
+    the one it had seeded for itself.
+    """
+    raw = Path(str(value or default or "."))
+    return raw if raw.is_absolute() else (ROOT / raw)
+
+
 def resolve_asset(rel: str | Path) -> Path:
     """Find a shipped file, letting the user's own copy win.
 

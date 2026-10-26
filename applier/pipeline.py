@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import Config, project_paths
+from .config import Config, data_path, project_paths
 from .db import Database, get_db, now
 
 # --------------------------------------------------------------------------- #
@@ -252,7 +252,7 @@ def _execute_application(job: dict, settings: Config, profile: Config,
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     safe = "".join(ch for ch in f"{job['company']}_{job['title']}" if ch.isalnum() or ch in "_- ")[:70]
-    artifact = Path(settings.get("apply.artifact_dir", "applications")) / f"{stamp}__{safe.strip()}"
+    artifact = data_path(settings.get("apply.artifact_dir", "applications")) / f"{stamp}__{safe.strip()}"
     artifact.mkdir(parents=True, exist_ok=True)
     (artifact / "job.json").write_text(json.dumps(job, indent=2, default=str), encoding="utf-8")
 

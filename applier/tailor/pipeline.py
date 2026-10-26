@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..config import Config
+from ..config import Config, data_path
 from .bank import Bank, Selection, job_family
 from .context import candidate_brief, job_brief, sanitize_job_text
 from .render import RenderError, VerifyReport, compile_pdf, render_tex, verify_pdf
@@ -82,7 +82,7 @@ def _group_selection(sel: Selection, bank: Bank) -> dict[str, list[dict]]:
 
 def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
                  *, variant: str = "default") -> tuple[Path, VerifyReport, Selection]:
-    bank = Bank(Path(settings.get("tailor.bank_path", "config/bank")))
+    bank = Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
 
     problems = bank.lint()
     if problems:
@@ -269,7 +269,7 @@ Return JSON: {"body": str}"""
 
 def build_cover_letter(job: dict, settings: Config, profile: Config, router,
                        artifact: Path, bank: Bank | None = None) -> Path | None:
-    bank = bank or Bank(Path(settings.get("tailor.bank_path", "config/bank")))
+    bank = bank or Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
     voice = profile.get("voice", {})
     lo, hi = voice.get("cover_letter_words", [220, 320])
 
@@ -324,7 +324,7 @@ def build_cover_letter(job: dict, settings: Config, profile: Config, router,
 def answer_free_text(question: str, job: dict, settings: Config, profile: Config,
                      router, bank: Bank | None = None, *, words: tuple[int, int] | None = None) -> str:
     """Answer an application's free-text question, grounded in the bank."""
-    bank = bank or Bank(Path(settings.get("tailor.bank_path", "config/bank")))
+    bank = bank or Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
     voice = profile.get("voice", {})
     lo, hi = words or voice.get("long_answer_words", [180, 300])
 
@@ -437,7 +437,7 @@ def build_documents(job: dict, settings: Config, profile: Config, router,
                     artifact: Path) -> tuple[Path | None, Path | None]:
     """Everything one application needs. Called by the apply pipeline."""
     artifact.mkdir(parents=True, exist_ok=True)
-    bank = Bank(Path(settings.get("tailor.bank_path", "config/bank")))
+    bank = Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
 
     variant = "research" if job_family(job) == "research" else "default"
     if variant not in (settings.get("tailor.variants", {}) or {}):

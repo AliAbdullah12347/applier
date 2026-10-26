@@ -25,7 +25,7 @@ from typing import Any
 from .. import autonomy
 from ..config import (
     CONFIG_DIR, Config, ConfigError, get_secret, load_profile, load_settings,
-    patch_settings, project_paths, redact, save_profile, set_secret, unanswered,
+    data_path, patch_settings, project_paths, redact, save_profile, set_secret, unanswered,
 )
 from ..db import get_db
 from .tasks import RUNNER, Task, console_for
@@ -730,8 +730,16 @@ def list_contacts(_body=None, **_kw) -> dict:
 def make_backup(body=None, **_kw) -> dict:
     """Write an archive of the irreplaceable files. Never contains a key."""
     from ..backup import create
+    from ..config import ROOT
     result = create()
-    return {"ok": True, "path": _relativise(result.path),
+    # Shown relative to the data directory. _relativise is scoped to the
+    # artifacts root, so it would have silently dropped a path under out/ --
+    # and it takes a list, so passing one path raised instead.
+    try:
+        shown = result.path.resolve().relative_to(Path(ROOT).resolve()).as_posix()
+    except (ValueError, OSError):
+        shown = str(result.path)
+    return {"ok": True, "path": shown,
             "files": result.files, "megabytes": round(result.megabytes, 2)}
 
 
@@ -895,7 +903,7 @@ def start_draft(body=None, **_kw) -> dict:
         if not drafts:
             return "nothing drafted — see the log for why each contact was skipped"
 
-        out_dir = Path(settings.get("outreach.output_dir", "out/outreach"))
+        out_dir = data_path(settings.get("outreach.output_dir", "out/outreach"))
         if not out_dir.is_absolute():
             out_dir = PATHS["root"] / out_dir
         path = save_batch(drafts, out_dir, db)

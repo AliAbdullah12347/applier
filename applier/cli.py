@@ -35,7 +35,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .config import (
+from .config import (data_path, 
     CONFIG_DIR, Config, ConfigError, get_secret, load_profile, load_settings,
     project_paths, save_profile, set_secret, unanswered,
 )
@@ -745,7 +745,7 @@ def outreach_draft(
         con.print("\n[yellow]Nothing drafted.[/yellow]")
         raise typer.Exit(1)
 
-    out = Path(settings.get("outreach.output_dir", "out/outreach"))
+    out = data_path(settings.get("outreach.output_dir", "out/outreach"))
     path = save_batch(drafts, out, db)
     con.print(f"\n[bold green]{len(drafts)} draft(s)[/bold green] -> {path}")
     con.print("[dim]Nothing was sent. Read, edit, and send them yourself.[/dim]")
@@ -784,7 +784,7 @@ def bank_import(
     extracted into the claims ledger; anything you retired stays retired.
     """
     settings, _ = _load()
-    bank_dir = Path(settings.get("tailor.bank_path", "config/bank"))
+    bank_dir = data_path(settings.get("tailor.bank_path", "config/bank"))
     master = master or bank_dir / "master_resume.md"
 
     from .tailor.master import MasterError, build_bank
@@ -823,7 +823,7 @@ def bank_lint() -> None:
     """Check every phrasing renders and every number traces to a claim."""
     settings, _ = _load()
     from .tailor.bank import Bank
-    b = Bank(Path(settings.get("tailor.bank_path", "config/bank")))
+    b = Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
     problems = b.lint()
 
     retired, unchecked = [], []
@@ -876,7 +876,7 @@ def bank_preview(
         con.print("[yellow]give a URL or --text[/yellow]")
         raise typer.Exit(1)
 
-    bank_dir = Path(settings.get("tailor.bank_path", "config/bank"))
+    bank_dir = data_path(settings.get("tailor.bank_path", "config/bank"))
     b = Bank(bank_dir)
     fam = job_family({"title": title, "description": jd})
     sel = b.select(jd, family=fam, line_budget=38)

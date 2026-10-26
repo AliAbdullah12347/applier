@@ -55,7 +55,7 @@ class Session:
             print("WARNING: headless=true. Greenhouse fraud detection flags headless "
                   "and datacenter signals. Strongly prefer headless=false.")
 
-        profile_dir = Path(self.s.get("apply.profile_dir", ".browser-profile")).resolve()
+        profile_dir = data_path(self.s.get("apply.profile_dir", ".browser-profile")).resolve()
         profile_dir.mkdir(parents=True, exist_ok=True)
 
         self._pw = sync_playwright().start()

@@ -301,10 +301,26 @@ tailor:
       no_invisible_text: true               # see integrity.forbid_hidden_text
 
 # ----------------------------------------------------------------------------
+# AUTONOMY
+# ----------------------------------------------------------------------------
+# How much happens without you. Shipped at the least autonomous setting on
+# purpose: a fresh install has an example profile full of placeholders, and
+# the inference that runs when this key is absent reads `apply.mode: auto` as
+# "assisted", which submits applications by itself. That is the wrong default
+# for software somebody has just opened for the first time.
+#
+#   involved    finds, scores, tailors, writes. Never opens a form.
+#   review      fills every field, then hands you the browser.
+#   assisted    submits the confident ones, queues the rest.
+#   autonomous  submits everything that clears the gates.
+autonomy:
+  level: "involved"
+
+# ----------------------------------------------------------------------------
 # APPLYING
 # ----------------------------------------------------------------------------
 apply:
-  mode: "auto"                      # auto | review | dry_run
+  mode: "dry_run"                   # auto | review | dry_run — set by the autonomy level above
   headless: false                   # MUST be false: Greenhouse flags headless/datacenter signals
   browser_channel: "chrome"
   profile_dir: ".browser-profile"   # persistent — logins survive between runs

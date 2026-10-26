@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import Config, project_paths
+from .config import Config, data_path, project_paths
 
 
 @dataclass
@@ -104,7 +104,7 @@ def _check_profile(profile: Config) -> Check:
 def _check_bank(settings: Config) -> Check:
     from .tailor.bank import Bank
 
-    bank_dir = Path(settings.get("tailor.bank_path", "config/bank"))
+    bank_dir = data_path(settings.get("tailor.bank_path", "config/bank"))
     if not (bank_dir / "atoms.yaml").exists():
         return Check("content bank", False, f"no atoms.yaml in {bank_dir}",
                      blocking=True,

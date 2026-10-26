@@ -184,3 +184,75 @@ def test_the_desktop_window_is_a_client_not_a_privileged_shell():
 @pytest.mark.parametrize("name", ["build.py", "entry.py", "applier.spec"])
 def test_packaging_files_exist(name):
     assert (ROOT / "packaging" / name).is_file()
+
+
+# --------------------------------------------------------------------------- #
+# relative paths in settings
+# --------------------------------------------------------------------------- #
+def test_a_relative_settings_path_means_the_data_directory(tmp_path):
+    """Not "whatever directory this was launched from".
+
+    Those were the same thing until there was a packaged build. Double-clicking
+    an executable sets the working directory to its own folder, so `config/bank`
+    pointed at nothing -- and running the packaged app from a checkout made it
+    silently read that checkout's real bank instead of the one it had seeded.
+    """
+    out = _in_subprocess(
+        "from applier.config import data_path;"
+        "print(data_path('config/bank'));"
+        "print(data_path('applications'))",
+        {"APPLIER_HOME": str(tmp_path)},
+    ).splitlines()
+    assert Path(out[0]) == tmp_path.resolve() / "config" / "bank"
+    assert Path(out[1]) == tmp_path.resolve() / "applications"
+
+
+def test_an_absolute_settings_path_is_left_alone(tmp_path):
+    out = _in_subprocess(
+        f"from applier.config import data_path;print(data_path({str(tmp_path)!r}))",
+        {"APPLIER_HOME": str(tmp_path / 'elsewhere')},
+    )
+    assert Path(out) == tmp_path
+
+
+def test_nothing_resolves_a_settings_path_against_the_working_directory():
+    """One escaped site is one install reading the wrong bank."""
+    import re as _re
+    for rel in ("applier/cli.py", "applier/pipeline.py", "applier/preflight.py",
+                "applier/tailor/pipeline.py", "applier/outreach/draft.py",
+                "applier/apply/browser.py"):
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        for m in _re.finditer(r'Path\((?:settings|self\.s)\.get\("([\w.]+)"', src):
+            raise AssertionError(
+                f"{rel} resolves {m.group(1)} against the working directory; "
+                f"use data_path()")
+
+
+# --------------------------------------------------------------------------- #
+# what a brand-new install does
+# --------------------------------------------------------------------------- #
+def test_a_fresh_install_does_not_submit_applications(tmp_path):
+    """The default somebody gets before they have configured anything.
+
+    With no autonomy.level the inference reads `apply.mode: auto` as
+    "assisted", which submits by itself -- on an install whose profile is
+    still full of placeholders. The shipped settings now say so explicitly.
+    """
+    out = _in_subprocess(
+        "from applier.config import ensure_home, load_settings;"
+        "ensure_home();"
+        "from applier import autonomy;"
+        "s = load_settings(reload=True);"
+        "lvl = autonomy.current(s);"
+        "print(lvl);print(autonomy.LEVELS[lvl].submits)",
+        {"APPLIER_HOME": str(tmp_path)},
+    ).splitlines()
+    assert out[0] == "involved", f"a fresh install defaults to {out[0]!r}"
+    assert out[1] == "False", "a fresh install would submit applications by itself"
+
+
+def test_the_shipped_settings_name_the_level_explicitly():
+    """Relying on inference is how the dangerous default got there."""
+    import yaml
+    data = yaml.safe_load((ROOT / "config" / "settings.yaml").read_text(encoding="utf-8"))
+    assert (data.get("autonomy") or {}).get("level") == "involved"

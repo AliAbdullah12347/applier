@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..config import Config
+from ..config import Config, data_path
 from ..db import Database, now
 from ..tailor.context import candidate_brief
 from .discover import Person, channel_for
@@ -149,7 +149,7 @@ def _best_highlight(settings: Config) -> str:
     """Pull the single most compelling line from the content bank."""
     try:
         from ..tailor.bank import Bank
-        bank = Bank(Path(settings.get("tailor.bank_path", "config/bank")))
+        bank = Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
         for atom in bank.atoms:
             if "default" in atom.lead_for or "ai_ml" in atom.lead_for:
                 text, _ = bank.resolve(atom.text("medium"), strict=False)
