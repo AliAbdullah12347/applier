@@ -35,6 +35,7 @@ PARITY: dict[str, tuple[str, ...]] = {
     "setup":    ("PUT /api/profile", "PUT /api/secrets"),
     "doctor":   ("POST /api/doctor",),
     "preflight": ("POST /api/preflight",),
+    "backup":    ("POST /api/backup",),
     "apply":    ("POST /api/apply",),
     "discover": ("POST /api/discover",),
     "rank":     ("POST /api/rank",),

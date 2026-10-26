@@ -734,6 +734,96 @@ async function extensionCard() {
 }
 
 
+/* Everything that must hold before leaving this running unattended.
+ *
+ * Deliberately a button rather than something that runs on load: it renders a
+ * real PDF and makes a real model call, which costs a few seconds and a few
+ * tokens. That is the right trade against a six-hour run that was never going
+ * to work, but not against opening a settings tab. */
+function preflightCard() {
+  const card = el('div', { class: 'card' },
+    el('h2', {}, 'Preflight',
+      el('span', { class: 'sub' }, 'before leaving it running unattended')));
+
+  const results = el('div', {});
+  const note = el('p', { class: 'muted small u-mt-8px' },
+    'Renders a real resume, makes a real model call and starts a real browser '
+    + '— the three things that look fine until something uses them. '
+    + '`applier run` does this first and refuses to start on a blocking failure.');
+
+  const button = el('button', { class: 'btn btn-primary' }, 'Run preflight');
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    clear(results);
+    results.appendChild(el('div', { class: 'dim small' }, 'Checking…'));
+    try {
+      const report = await post('/api/preflight', { deep: true });
+      clear(results);
+      const tb = el('tbody');
+      for (const c of report.checks) {
+        const tone = c.ok ? 'ok' : (c.blocking ? 'bad' : 'warn');
+        const label = c.ok ? 'ok' : (c.blocking ? 'blocked' : 'warn');
+        tb.appendChild(el('tr', {},
+          el('td', { class: 'shrink' }, pill(label, tone)),
+          el('td', { class: 'shrink' }, c.name),
+          el('td', { class: 'small dim' }, c.detail || '—')));
+        if (!c.ok && c.fix) {
+          tb.appendChild(el('tr', {},
+            el('td', {}),
+            el('td', { colspan: '2', class: 'small' }, c.fix)));
+        }
+      }
+      results.appendChild(el('table', {}, tb));
+      results.appendChild(el('div', { class: report.ok ? 'banner ok' : 'banner bad' },
+        report.ok
+          ? 'Ready to run unattended.'
+          : `Not ready — ${report.blocking.length} blocking problem(s): ${report.blocking.join(', ')}`));
+    } catch (e) {
+      clear(results);
+      results.appendChild(el('div', { class: 'banner bad' }, e.message));
+    }
+    button.disabled = false;
+  });
+
+  card.append(el('div', { class: 'row' }, button), results, note);
+  return card;
+}
+
+/* The three things here that cannot be rebuilt: the profile, the content
+ * bank, and the record of what has been applied to. */
+function backupCard() {
+  const card = el('div', { class: 'card' },
+    el('h2', {}, 'Backup',
+      el('span', { class: 'sub' }, 'the parts that cannot be regenerated')));
+
+  const out = el('div', {});
+  const button = el('button', { class: 'btn' }, 'Back up now');
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    clear(out);
+    out.appendChild(el('div', { class: 'dim small' }, 'Writing…'));
+    try {
+      const r = await post('/api/backup', {});
+      clear(out);
+      out.appendChild(el('div', { class: 'banner ok' },
+        `${r.files} file(s), ${r.megabytes} MB`));
+      out.appendChild(el('div', { class: 'mono small u-mt-8px' }, r.path));
+    } catch (e) {
+      clear(out);
+      out.appendChild(el('div', { class: 'banner bad' }, e.message));
+    }
+    button.disabled = false;
+  });
+
+  card.append(el('div', { class: 'row' }, button), out,
+    el('p', { class: 'muted small u-mt-8px' },
+      'Your profile, your content bank, and the record of what you have '
+      + 'applied to. Artifacts are left out — they regenerate from the bank. '
+      + 'API keys are not included: they live in the OS keychain, and an '
+      + 'archive containing them would be a plaintext secret in a folder.'));
+  return card;
+}
+
 async function renderMaintenance(host) {
   loading(host, 'Loading paths…');
   let p;
@@ -802,7 +892,7 @@ async function renderMaintenance(host) {
       'Remembered in this browser. The page opens dark and switches once this panel loads, so the '
       + 'choice shows a moment late on a cold start.'));
 
-  host.append(pathCard, auditCard, themeCard);
+  host.append(preflightCard(), backupCard(), pathCard, auditCard, themeCard);
 }
 
 function readTheme() {

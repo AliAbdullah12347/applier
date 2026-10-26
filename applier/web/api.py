@@ -727,6 +727,14 @@ def list_contacts(_body=None, **_kw) -> dict:
             "pending": sum(1 for c in contacts if c["stage"] == "harvested")}
 
 
+def make_backup(body=None, **_kw) -> dict:
+    """Write an archive of the irreplaceable files. Never contains a key."""
+    from ..backup import create
+    result = create()
+    return {"ok": True, "path": _relativise(result.path),
+            "files": result.files, "megabytes": round(result.megabytes, 2)}
+
+
 def run_preflight_api(body=None, **_kw) -> dict:
     """Everything that must hold before an unattended run. Costs a model call."""
     body = body or {}

@@ -386,6 +386,49 @@ def rank(top: int = typer.Option(25, help="How many to display.")) -> None:
 
 
 @app.command()
+def backup(
+    to: Path = typer.Option(None, "--to", help="Where to write it. Defaults to out/."),
+    restore_from: Path = typer.Option(None, "--restore", help="Unpack an archive instead."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace existing files on restore."),
+) -> None:
+    """Copy out the three things here that cannot be rebuilt.
+
+    Your profile, your content bank and the record of what you have applied
+    to. The code is in git and the job table can be rediscovered; those three
+    are months of work and a single directory. API keys are not included --
+    they live in the OS keychain, and an archive containing them would be a
+    plaintext secret in a Downloads folder.
+    """
+    _load()
+    from .backup import create, inspect as inspect_archive, restore as do_restore
+
+    if restore_from:
+        if not restore_from.exists():
+            con.print(f"[red]no such archive: {restore_from}[/red]")
+            raise typer.Exit(1)
+        meta = inspect_archive(restore_from)
+        con.print(f"[dim]{meta.get('entries', '?')} entries, written "
+                  f"{meta.get('created', 'unknown')}[/dim]")
+        try:
+            written = do_restore(restore_from, overwrite=overwrite)
+        except FileExistsError as e:
+            con.print(f"[yellow]{e}[/yellow]")
+            raise typer.Exit(1)
+        except ValueError as e:
+            con.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+        con.print(f"[green]restored[/green] {len(written)} file(s)")
+        return
+
+    result = create(to)
+    con.print(f"[green]backed up[/green] {result.files} file(s), "
+              f"{result.megabytes:.1f} MB")
+    con.print(f"  {result.path}")
+    con.print("[dim]API keys are not in it. After a restore on a new machine, "
+              "set them again with `applier config set-key`.[/dim]")
+
+
+@app.command()
 def preflight(
     quick: bool = typer.Option(False, "--quick", help="Skip the render, the model call and the browser."),
 ) -> None:

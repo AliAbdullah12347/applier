@@ -32,6 +32,7 @@ export async function render(ctx) {
     el('span', {},
       'Drafts only. Nothing here is ever sent — you copy each message and send it yourself.')));
 
+  ctx.view.appendChild(forJobCard(ctx));
   ctx.view.appendChild(harvestCard(ctx));
   ctx.view.appendChild(draftCard(ctx));
 
@@ -53,6 +54,52 @@ export async function render(ctx) {
 }
 
 /* ------------------------------------------------------------ find people -- */
+/* The question people actually have: "here is a job link, who do I talk to".
+ *
+ * Harvest below answers a different one -- it needs to be told where to look.
+ * This establishes the employer from the posting first, which is the hard
+ * part, and only then looks for people. */
+function forJobCard(ctx) {
+  const input = el('input', {
+    type: 'text',
+    placeholder: 'Paste a job URL, or a job id from the Jobs tab',
+    onkeydown: (e) => { if (e.key === 'Enter') find(); } });
+
+  const btn = el('button', { class: 'btn btn-primary', onclick: find }, 'Find people');
+
+  async function find() {
+    const value = input.value.trim();
+    if (!value) { toast('Paste a job link first.', 'bad'); return; }
+    const body = /^\d+$/.test(value) ? { job_id: Number(value) } : { url: value };
+    if (!body.job_id && !/^https?:\/\//i.test(value)) {
+      toast('That is neither a job id nor an http(s) link.', 'bad');
+      return;
+    }
+    btn.disabled = true;
+    try {
+      await runTask('/api/outreach/for-job', body, { onDone: ctx.refresh });
+    } catch (e) {
+      toast(e.message, 'bad');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  return el('div', { class: 'card' },
+    el('h2', {}, 'People for a posting',
+      el('span', { class: 'sub' }, 'from the job link, nothing to look up by hand')),
+    el('div', { class: 'row' },
+      el('div', { class: 'u-c3-2' }, input),
+      btn),
+    el('p', { class: 'muted small u-mt-8px' },
+      'Uses only sources that state who someone is: a contact address the '
+      + 'posting publishes, structured team-page data, and members of a GitHub '
+      + 'organisation that corroborates the company. Reading names out of '
+      + 'ordinary markup was tried and removed — it invented people. If the '
+      + 'employer domain had to be guessed, addresses are withheld until you '
+      + 'confirm it.'));
+}
+
 function harvestCard(ctx) {
   const kindSel = el('select', {
     class: 'u-w-auto', onchange: () => { input.placeholder = placeholderFor(kindSel.value); } }, ...KINDS.map((k) => el('option', { value: k.key }, k.label)));
