@@ -154,3 +154,68 @@ def test_legal_fields_never_come_from_a_model(bank):
     for q in ("Are you a U.S. citizen?", "What is your current visa status?",
               "Are you legally authorized to work in the United States?"):
         assert bank.resolve(q).source == "profile_legal"
+
+
+# --------------------------------------------------------------------------- #
+# the field that was left blank
+# --------------------------------------------------------------------------- #
+# A form labelled "Expected graduation (YYYY-MM)" matched nothing, because the
+# pattern required the literal word "date" and forms routinely replace it with
+# a format hint. A required field left empty is an application that cannot be
+# submitted, and it fails silently: an unmatched field looks exactly like a
+# field that was not on the form.
+@pytest.mark.parametrize("label", [
+    "Expected graduation (YYYY-MM)",
+    "Expected graduation",
+    "Anticipated graduation",
+    "Graduation date",
+    "Graduation year",
+    "Grad month",
+    "When will you graduate?",
+    "When do you expect to graduate?",
+    "Date of graduation",
+    "Degree completion date",
+    "Estimated graduation term",
+])
+def test_every_way_a_form_asks_when_you_finish(label):
+    import re
+
+    import applier.apply.answers as answers
+
+    patterns = None
+    for name in dir(answers):
+        value = getattr(answers, name)
+        if (isinstance(value, (list, tuple)) and value
+                and isinstance(value[0], tuple) and len(value[0]) == 3):
+            patterns = value
+            break
+    assert patterns, "the question pattern table has moved"
+
+    grad = [p for qid, p, _legal in patterns if qid == "graduation_date"][0]
+    assert any(re.search(p, label, re.I) for p in grad), (
+        f"{label!r} matches nothing, so the field is left blank and the "
+        f"application cannot be submitted")
+
+
+@pytest.mark.parametrize("label", [
+    "First name",
+    "Why do you want to work here?",
+    "Are you legally authorised to work?",
+    "Undergraduate GPA",
+    "Graduate school attended",
+])
+def test_the_wider_pattern_does_not_swallow_other_questions(label):
+    import re
+
+    import applier.apply.answers as answers
+
+    patterns = None
+    for name in dir(answers):
+        value = getattr(answers, name)
+        if (isinstance(value, (list, tuple)) and value
+                and isinstance(value[0], tuple) and len(value[0]) == 3):
+            patterns = value
+            break
+    grad = [p for qid, p, _legal in patterns if qid == "graduation_date"][0]
+    assert not any(re.search(p, label, re.I) for p in grad), (
+        f"{label!r} would be answered with a graduation date")

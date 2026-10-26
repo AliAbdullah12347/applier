@@ -307,6 +307,19 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                         con.print("[yellow]no verification email found; "
                                   "the account may need manual confirmation[/yellow]")
 
+        # The posting and the form are the same page on an ATS and different
+        # pages on a company's own site. Find the form before filling.
+        if not _enter_application(sess, page, con):
+            shot = sess.screenshot(artifact / "no-form.png")
+            db.run("UPDATE applications SET status='no_form', failure_reason=?, "
+                   "artifact_dir=? WHERE job_id=?",
+                   ("no application form found on the page or behind an apply link",
+                    _rel_artifact(artifact), job_id))
+            return (f"No application form found at {target}.\n"
+                    f"  The page has no fields and no apply link that leads to any. "
+                    f"It may need a login, or the form may be in an iframe.\n"
+                    f"  screenshot: {shot}")
+
         filler = UniversalFiller(bank, router, settings, profile)
         max_pages = int(settings.get("apply.universal_filler.max_pages_per_application", 12))
         submitted = False
@@ -341,14 +354,30 @@ def _execute_application(job: dict, settings: Config, profile: Config,
             if res.mismatches:
                 con.print(f"[yellow]{len(res.mismatches)} field(s) did not take[/yellow]")
 
-            # resume upload, using the platform's known selectors first
+            # resume upload, using the platform's known selectors first.
+            #
+            # Recorded in the audit trail like any other answer. It was not,
+            # and the omission was invisible in exactly the wrong way: the
+            # upload worked, the file reached the employer, and the record of
+            # what had been sent said nothing about it. integrity.yaml calls
+            # for logging every submitted answer, and a resume is the most
+            # consequential one on the form.
             if resume_path:
                 for sel in adapter.resume_inputs or ['input[type=file]']:
                     if sess.upload(sel, resume_path):
+                        audit_trail.append({
+                            "question": "Resume", "answer": resume_path.name,
+                            "source": "tailored", "selector": sel, "legal": False,
+                            "bytes": resume_path.stat().st_size,
+                        })
                         break
             if cover_path and adapter.cover_inputs:
                 for sel in adapter.cover_inputs:
                     if sel.startswith('input[type=file]') and sess.upload(sel, cover_path):
+                        audit_trail.append({
+                            "question": "Cover letter", "answer": cover_path.name,
+                            "source": "generated", "selector": sel, "legal": False,
+                        })
                         break
 
             shot = sess.screenshot(artifact / f"step-{step}.png")
@@ -409,8 +438,16 @@ def _execute_application(job: dict, settings: Config, profile: Config,
              str(resume_path) if resume_path else None, job_id),
         )
 
-        return (f"{'Submitted' if submitted else 'Filled but not submitted'}: "
-                f"{job['company']} — {job['title']}\n  artifacts: {artifact}")
+        if submitted:
+            outcome = "Submitted"
+        elif audit_trail:
+            outcome = f"Filled {len(audit_trail)} field(s), not submitted"
+        else:
+            # Reaching the end having answered nothing is a failure wearing a
+            # success message, which is how an empty run looked for a while.
+            outcome = "Nothing was filled — no answerable fields were found"
+        return (f"{outcome}: {job['company']} — {job['title']}"
+                f"\n  artifacts: {artifact}")
 
     except Exception as e:
         # Never downgrade a submitted application. Something failing after the
@@ -424,6 +461,72 @@ def _execute_application(job: dict, settings: Config, profile: Config,
     finally:
         if settings.get("apply.mode") != "review":
             sess.close()
+
+
+# A posting URL and an application form are the same page on Greenhouse,
+# Lever and Ashby, which is why this was never needed. On a company's own
+# careers site they are not: the posting is prose with an "Apply" button, and
+# landing there means finding no fields, filling nothing, and reporting
+# "Filled but not submitted" -- a success message for having done nothing.
+APPLY_LINK_SELECTORS = (
+    "a#apply-link", "a[href*='apply' i]", "button[id*='apply' i]",
+    "a[id*='apply' i]", "a[class*='apply' i]", "button[class*='apply' i]",
+    "a:has-text('Apply')", "button:has-text('Apply')",
+    "a:has-text('Submit application')", "a:has-text('Start application')",
+)
+
+# Inputs that exist on pages that are not application forms: a site search, a
+# newsletter signup, a cookie banner's hidden state.
+_NOT_A_FORM_FIELD = (
+    "[type=hidden]", "[type=search]", "[type=submit]", "[type=button]",
+    "[type=image]", "[type=reset]",
+)
+
+
+def _fillable_count(page) -> int:
+    """How many fields on this page look like an application asking something."""
+    try:
+        selector = ", ".join(
+            f"{tag}:not({'):not('.join(_NOT_A_FORM_FIELD)})"
+            for tag in ("input", "textarea", "select"))
+        return len(page.query_selector_all(selector))
+    except Exception:                                   # noqa: BLE001
+        return 0
+
+
+def _enter_application(sess, page, con, *, hops: int = 2) -> bool:
+    """Walk from a posting to its form. True when a form is in front of us.
+
+    Deliberately conservative about what counts as a form -- two fields, not
+    one -- because a newsletter box is one field and following nothing is
+    better than filling a mailing list signup with a home address.
+    """
+    for hop in range(hops + 1):
+        found = _fillable_count(page)
+        if found >= 2:
+            if hop:
+                con.print(f"[dim]entered the application form ({found} fields)[/dim]")
+            return True
+        if hop == hops:
+            break
+        clicked = False
+        for selector in APPLY_LINK_SELECTORS:
+            try:
+                element = page.query_selector(selector)
+            except Exception:                           # noqa: BLE001
+                continue
+            if not element:
+                continue
+            try:
+                element.click()
+                sess.settle()
+                clicked = True
+                break
+            except Exception:                           # noqa: BLE001
+                continue
+        if not clicked:
+            break
+    return _fillable_count(page) >= 2
 
 
 def _record_submission(db: Database, job: dict, settings: Config) -> None:

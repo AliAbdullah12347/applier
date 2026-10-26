@@ -64,9 +64,22 @@ QUESTION_TAXONOMY: list[tuple[str, list[str], bool]] = [
     ("export_control", [r"export control", r"itar"], True),
     ("legal_name", [r"^legal (first |last |full )?name", r"name as it appears"], True),
     ("date_of_birth", [r"date of birth", r"^dob$", r"birth ?date"], True),
+    # Widened after a form labelled "Expected graduation (YYYY-MM)" matched
+    # nothing and was left blank: the pattern required the literal word
+    # "date", which forms routinely omit in favour of a format hint. A
+    # required field left empty is an application that cannot be submitted,
+    # and the failure is silent because an unmatched field looks the same as
+    # a field that was not there.
     ("graduation_date", [
-        r"(expected |anticipated )?graduation date",
-        r"when do you graduate", r"expected completion", r"degree completion date",
+        # "grad" alone is too little: it sits inside "undergraduate", so a
+        # GPA field would be answered with a date. Either the whole word, or
+        # the abbreviation followed by something that makes it a date.
+        r"\bgraduation\b",
+        r"\bgrad\s*(date|year|month|term|semester)\b",
+        r"\b(expected|anticipated|estimated|projected)\s+grad(uation)?\b",
+        r"when (do|will) you (expect to )?graduate",
+        r"expected completion", r"degree completion",
+        r"date of graduation", r"graduating in",
     ], True),
     ("degree_type", [r"degree type", r"what degree", r"level of (degree|education)"], True),
 

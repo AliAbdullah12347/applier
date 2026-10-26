@@ -69,13 +69,34 @@ HARVEST_JS = r"""
     // 3. ancestor <label>
     const anc = el.closest('label');
     if (anc && anc.innerText.trim()) return anc.innerText.trim();
-    // 4. enclosing field group -- walk up looking for a label-ish sibling
-    let node = el.parentElement;
-    for (let i = 0; i < 5 && node; i++, node = node.parentElement) {
-      const cand = node.querySelector('label, legend, .label, [class*="label"], [class*="Label"]');
-      if (cand && cand.innerText.trim() && !cand.contains(el)) return cand.innerText.trim();
-      if (node.getAttribute && node.getAttribute('data-automation-id')) {
-        const t = node.innerText.trim().split('\n')[0];
+    // 4. the nearest PRECEDING text that reads like a label.
+    //
+    // This used to call node.querySelector('label, ...') on each ancestor in
+    // turn, which searches that ancestor's entire subtree. Walk up as far as
+    // the <form> and the first match is the first label on the whole form --
+    // so a graduation-date field with no label of its own was told it was
+    // called "First name" and filled with one. On a real application that is
+    // a visible error in front of a recruiter, and the field it happens to
+    // is always the awkward one nobody labelled properly.
+    //
+    // Walking backwards finds the thing a human would read as the question.
+    const labelish = (n) => {
+      if (!n || n.nodeType !== 1) return '';
+      if (n.matches('label, legend')) return n.innerText.trim();
+      if (n.querySelector('input, select, textarea, button')) return '';
+      if (!/^(p|span|div|strong|b|em|h[1-6]|dt|td|th)$/i.test(n.tagName)) return '';
+      const t = (n.innerText || '').trim();
+      return (t && t.length <= 160) ? t : '';
+    };
+    let probe = el;
+    for (let hop = 0; hop < 6 && probe; hop++, probe = probe.parentElement) {
+      for (let sib = probe.previousElementSibling; sib; sib = sib.previousElementSibling) {
+        const t = labelish(sib);
+        if (t) return t;
+      }
+      const owner = probe.parentElement;
+      if (owner && owner.getAttribute && owner.getAttribute('data-automation-id')) {
+        const t = owner.innerText.trim().split('\n')[0];
         if (t) return t;
       }
     }
