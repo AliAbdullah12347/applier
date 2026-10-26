@@ -25,8 +25,6 @@ import re
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
-import httpx
-
 from ..config import Config
 from ..db import Database
 from ..net import guarded_get, guarded_text

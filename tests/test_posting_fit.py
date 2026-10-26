@@ -217,3 +217,52 @@ def test_the_company_name_never_becomes_empty():
             name = _BOARD_NAME_NOISE.sub("", name).strip(" -–—|,")
         # It may strip to nothing -- the caller must fall back to the token.
         assert name == "" or name == raw
+
+
+# --------------------------------------------------------------------------- #
+# the other shape, and the commoner one
+# --------------------------------------------------------------------------- #
+# OPT_CARVE_OUT reads a refusal that is immediately qualified, which needs a
+# "but" to hang on. Most postings that take international students have no
+# refusal to qualify -- they simply say so. Found when a test posting saying
+# "we welcome international students and support CPT and OPT" scored as
+# silent, below a posting that says nothing but happens to use a configured
+# phrase verbatim.
+@pytest.mark.parametrize("sentence", [
+    "We welcome international students and support CPT and OPT.",
+    "We accept students eligible for CPT/OPT.",
+    "F-1 visa holders on practical training are encouraged to apply.",
+    "International students are welcome to apply.",
+    "Candidates eligible for CPT are considered.",
+])
+def test_a_posting_that_simply_welcomes_opt_is_read_as_such(sentence):
+    from applier.score.gates import welcomes_opt
+    assert welcomes_opt(sentence) is True
+
+
+@pytest.mark.parametrize("sentence", [
+    "We do not accept OPT candidates.",
+    "We cannot support CPT at this time.",
+    "We will not consider international students.",
+    "International students are not eligible for this programme.",
+    "No visa sponsorship is available.",
+    "A great place to work, with free lunch.",
+])
+def test_a_refusal_is_not_read_as_a_welcome(sentence):
+    """Every token this looks for sits inside "we do not accept OPT"."""
+    from applier.score.gates import welcomes_opt
+    assert welcomes_opt(sentence) is False
+
+
+@pytest.mark.parametrize("desc,expected", [
+    ("We do not sponsor visas but will consider applicants with STEM/OPT "
+     "eligibility.", "opt_ok"),
+    ("We welcome international students and support CPT and OPT.", "opt_ok"),
+    ("F-1 visa holders on practical training are encouraged to apply.", "opt_ok"),
+    ("A great place to work.", "silent"),
+    ("International students are not eligible.", "silent"),
+])
+def test_the_gate_reaches_the_same_answer_whichever_shape_it_is(desc, expected):
+    g = check_gates(_job(desc), _settings(), _profile())
+    assert g.passed is True
+    assert g.sponsorship == expected

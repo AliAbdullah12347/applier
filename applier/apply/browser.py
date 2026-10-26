@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from ..config import Config
+from ..config import Config, data_path
 
 
 class BrowserUnavailable(RuntimeError):

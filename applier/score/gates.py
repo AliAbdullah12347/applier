@@ -51,6 +51,51 @@ OPT_CARVE_OUT = re.compile(
     r"\b(?:but|however|though|although|unless|except|while|whilst)\b[^.;]{0,160}?"
     r"\b(?:stem[\s/-]*opt|opt|cpt|practical training|f-?1)\b", re.I)
 
+# The other shape, and the commoner one. OPT_CARVE_OUT reads a refusal that is
+# immediately qualified, which needs a "but" to hang on. A posting that just
+# says "we welcome international students and support CPT and OPT" has no
+# refusal to qualify, so that pattern never fires and the posting reads as
+# silent -- which scores it below one that says nothing at all about
+# sponsorship but happens to use one of the configured phrases verbatim.
+#
+# Negation is checked explicitly rather than hoped for: "we do not accept OPT"
+# contains "accept" and "OPT" within sixty characters of each other.
+OPT_WELCOME = re.compile(
+    r"\b(support|accept|welcome|consider|sponsor|open to|eligible for|"
+    r"encourage)\w*\b([^.;]{0,70}?)"
+    r"\b(cpt|opt|practical training|f-?1 students?|international students?)\b",
+    re.I)
+
+_NEGATION = re.compile(r"\b(not|never|cannot|can't|unable|un(?:fortunately)?|"
+                       r"no longer|do not|does not|will not|won't)\b", re.I)
+
+
+# A welcome can sit on either side of the thing being welcomed:
+# "we support CPT and OPT" and "F-1 visa holders are encouraged to apply" say the
+# same thing in opposite orders, and matching only one of them missed half.
+OPT_WELCOME_AFTER = re.compile(
+    r"\b(cpt|opt|practical training|f-?1 students?|international students?)\b"
+    r"([^.;]{0,70}?)\b(welcome|encouraged?|eligible|accepted|considered|"
+    r"supported|invited)\w*\b",
+    re.I)
+
+
+def welcomes_opt(text: str) -> bool:
+    """True when a posting positively says it takes CPT/OPT or F-1 visa holders.
+
+    Negation is checked against the words between the two halves and a short
+    run before them, because "we do not accept OPT" puts every token this
+    looks for within sixty characters of each other.
+    """
+    text = text or ""
+    for pattern, lead_group in ((OPT_WELCOME, 2), (OPT_WELCOME_AFTER, 2)):
+        for m in pattern.finditer(text):
+            window = text[max(0, m.start() - 36):m.start()] + " " + (m.group(lead_group) or "")
+            if _NEGATION.search(window):
+                continue
+            return True
+    return False
+
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower())
 
@@ -112,7 +157,7 @@ def check_gates(job: dict[str, Any], settings: Config, profile: Config,
             sponsorship = "sponsors"
             break
     else:
-        if carve_out:
+        if carve_out or welcomes_opt(job.get("description", "") or ""):
             # Not sponsorship, but an employer that has thought about OPT and
             # said yes is a materially better prospect than one that is silent.
             sponsorship = "opt_ok"
