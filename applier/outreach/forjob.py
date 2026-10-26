@@ -29,6 +29,7 @@ import httpx
 
 from ..config import Config
 from ..db import Database
+from ..net import guarded_get, guarded_text
 from .discover import (UA, Person, domain_pattern, from_github_org,
                        synthesize_email)
 
@@ -76,9 +77,15 @@ MAX_PAGE_FETCHES = 6          # per job, total. Politeness is a budget.
 TIMEOUT = 20.0
 
 
-def _client() -> httpx.Client:
-    return httpx.Client(headers={"User-Agent": UA}, timeout=TIMEOUT,
-                        follow_redirects=True)
+def _get(url: str) -> str:
+    """Fetch a URL that came out of a job description.
+
+    Job descriptions are written by whoever posted the job, so the links in
+    them are attacker-controlled. Everything here goes through the guard in
+    applier.net, which refuses loopback, private and link-local addresses
+    after DNS resolution and re-checks on every redirect.
+    """
+    return guarded_text(url, headers={"User-Agent": UA}, timeout=TIMEOUT)
 
 
 def _slug(text: str) -> str:
@@ -237,15 +244,10 @@ def resolve_employer(job: dict[str, Any], settings: Config | None = None,
     # 3. a domain the description mentions
     if not resolved:
         for candidate in _domains_in(str(job.get("description") or ""))[:3]:
-            try:
-                with _client() as c:
-                    r = c.get(f"https://{candidate}")
-                if r.status_code < 400 and _looks_like(company, r.text, candidate,
-                                                       strict=False):
-                    resolved, how = candidate, "described"
-                    break
-            except httpx.HTTPError:
-                continue
+            page = _get(f"https://{candidate}")
+            if page and _looks_like(company, page, candidate, strict=False):
+                resolved, how = candidate, "described"
+                break
 
     # 4. the company name as a domain, verified before it is believed
     if not resolved:
@@ -253,15 +255,10 @@ def resolve_employer(job: dict[str, Any], settings: Config | None = None,
         if 2 < len(name) <= 30:
             for tld in (".com", ".io", ".ai", ".co"):
                 candidate = name + tld
-                try:
-                    with _client() as c:
-                        r = c.get(f"https://{candidate}")
-                    if r.status_code < 400 and _looks_like(company, r.text, candidate,
-                                                           strict=True):
-                        resolved, how = candidate, "guessed"
-                        break
-                except httpx.HTTPError:
-                    continue
+                page = _get(f"https://{candidate}")
+                if page and _looks_like(company, page, candidate, strict=True):
+                    resolved, how = candidate, "guessed"
+                    break
 
     _cache_domain(db, company, f"{resolved}|{how}")
     return resolved, how
@@ -320,14 +317,7 @@ def from_company_site(domain: str, company: str = "", *, limit: int = 20,
             return
         budget -= 1
         url = f"https://{domain}{path}"
-        html = ""
-        try:
-            with _client() as c:
-                r = c.get(url)
-            if r.status_code < 400:
-                html = r.text
-        except httpx.HTTPError:
-            continue
+        html = _get(url)
         if not html:
             continue
 
@@ -366,13 +356,13 @@ def from_company_github(company: str, domain: str, *, limit: int = 15) -> Iterat
                 if v and 2 < len(v) <= 39]
 
     for slug in variants:
+        response = guarded_get(f"https://api.github.com/orgs/{slug}",
+                               headers={"User-Agent": UA}, timeout=TIMEOUT)
+        if response is None or response.status_code != 200:
+            continue
         try:
-            with _client() as c:
-                r = c.get(f"https://api.github.com/orgs/{slug}")
-            if r.status_code != 200:
-                continue
-            meta = r.json()
-        except (httpx.HTTPError, ValueError):
+            meta = response.json()
+        except ValueError:
             continue
 
         blog = _slug(str(meta.get("blog") or ""))

@@ -168,12 +168,11 @@ def from_team_page(url: str, *, limit: int = 25) -> Iterator[Person]:
     """
     from ..discover.sources import _strip_html, domain_from_url
 
-    try:
-        with httpx.Client(headers={"User-Agent": UA}, timeout=30.0, follow_redirects=True) as c:
-            r = c.get(url)
-            r.raise_for_status()
-            html = r.text
-    except httpx.HTTPError:
+    # A team-page URL is typed by hand, but the same guard costs nothing and
+    # means there is one way into this process rather than two.
+    from ..net import guarded_text
+    html = guarded_text(url, headers={"User-Agent": UA}, timeout=30.0)
+    if not html:
         return
 
     text = _strip_html(html)

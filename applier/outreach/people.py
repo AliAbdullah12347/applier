@@ -303,6 +303,12 @@ def fetch_rendered(url: str, *, timeout_ms: int = 20_000) -> str:
         from playwright.sync_api import sync_playwright
     except Exception:
         return ""
+
+    # A real browser pointed at an attacker-chosen URL is a worse primitive
+    # than a GET, so the same guard applies before one is opened.
+    from ..net import is_public_url
+    if not is_public_url(url):
+        return ""
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
