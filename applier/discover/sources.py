@@ -344,6 +344,46 @@ BOARD_FETCHERS = {
 
 
 # --------------------------------------------------------------------------- #
+# Subdomains a company puts its careers site on; the company is the parent.
+_CAREERS_SUBS = ("jobs", "careers", "career", "apply", "work", "join",
+                 "hiring", "talent", "recruiting", "www", "boards", "job")
+
+# Separators a page title uses between the role and the employer.
+_TITLE_SPLIT = re.compile(r"\s+[|\u2013\u2014\u00b7-]\s+|\s+at\s+", re.I)
+
+
+def company_from_page(html: str, url: str) -> str:
+    """The employer's name, as the page gives it.
+
+    `domain_from_url(url).split(".")[0].title()` was the whole of this, which
+    turns careers.acme.com into "Careers" and a loopback test server into
+    "127". The name ends up on the tracker, in the artifact directory, and in
+    whatever the cover letter says about where it is applying.
+    """
+    for pattern in (r'property=["\']og:site_name["\'][^>]*content=["\']([^"\']{1,80})',
+                    r'content=["\']([^"\']{1,80})["\'][^>]*property=["\']og:site_name["\']',
+                    r'name=["\']application-name["\'][^>]*content=["\']([^"\']{1,80})'):
+        m = re.search(pattern, html or "", re.I)
+        if m and m.group(1).strip():
+            return m.group(1).strip()[:80]
+
+    m = re.search(r"<title[^>]*>(.*?)</title>", html or "", re.I | re.S)
+    if m:
+        parts = [p.strip() for p in _TITLE_SPLIT.split(re.sub(r"\s+", " ", m.group(1)))]
+        parts = [p for p in parts if p]
+        # "Software Engineer - Acme" puts the employer last; a single-part
+        # title is the role, not the company, so it is not used.
+        if len(parts) >= 2 and 1 < len(parts[-1]) <= 60:
+            return parts[-1]
+
+    host = (urlparse(url).hostname or "").lower().removeprefix("www.")
+    labels = [p for p in host.split(".") if p]
+    while len(labels) > 2 and labels[0] in _CAREERS_SUBS:
+        labels = labels[1:]
+    stem = labels[0] if labels else ""
+    return stem.replace("-", " ").title() if stem else "Unknown"
+
+
 def fetch_single(url: str) -> RawJob | None:
     """Fetch one posting from a link. Used by `applier apply <url>`.
 
@@ -387,7 +427,7 @@ def fetch_single(url: str) -> RawJob | None:
     if mt:
         title = re.sub(r"\s+", " ", mt.group(1)).strip()
     return RawJob(
-        company=domain_from_url(url).split(".")[0].title(),
+        company=company_from_page(html, url),
         title=title[:180], location="", url=url, source="manual",
         ats=ats, description=_strip_html(html)[:20000],
     )

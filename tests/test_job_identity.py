@@ -230,3 +230,36 @@ def test_weak_key_is_not_unique_but_fingerprint_is(db):
     keys = db.q("SELECT weak_key, fingerprint FROM jobs")
     assert len({k["weak_key"] for k in keys}) == 1, "these postings do resemble each other"
     assert len({k["fingerprint"] for k in keys}) == 2, "but they are not the same posting"
+
+
+# --------------------------------------------------------------------------- #
+# what the employer is called
+# --------------------------------------------------------------------------- #
+# `domain_from_url(url).split(".")[0].title()` was the whole of this, which
+# turns careers.acme.com into "Careers" and a loopback test server into "127".
+# The name reaches the tracker, the artifact directory, and whatever the cover
+# letter says about where it is applying.
+@pytest.mark.parametrize("html,url,expected", [
+    ("<html><head><title>Software Engineering Intern - Loopback Industries</title>"
+     "</head></html>", "http://127.0.0.1:8990/job", "Loopback Industries"),
+    ('<html><head><meta property="og:site_name" content="Acme Corp">'
+     "<title>Jobs</title></head></html>", "https://careers.acme.com/x", "Acme Corp"),
+    ("<html><head><title>Backend Engineer | Stripe</title></head></html>",
+     "https://stripe.com/jobs/1", "Stripe"),
+    ("<html><head><title>Engineer at Figma</title></head></html>",
+     "https://figma.com/careers", "Figma"),
+    # No title worth reading: fall back to the domain, minus the careers
+    # subdomain that used to become the company name.
+    ("<html></html>", "https://careers.acme-labs.com/x", "Acme Labs"),
+    ("<html><head><title>Apply</title></head></html>",
+     "https://jobs.bytedance.com/x", "Bytedance"),
+])
+def test_the_company_name_comes_from_the_page_not_the_hostname(html, url, expected):
+    from applier.discover.sources import company_from_page
+    assert company_from_page(html, url) == expected
+
+
+def test_a_page_with_nothing_usable_still_yields_something():
+    from applier.discover.sources import company_from_page
+    assert company_from_page("", "https://example.com/jobs/1") == "Example"
+    assert company_from_page("", "not a url") == "Unknown"

@@ -342,15 +342,31 @@ def doctor() -> None:
 @app.command()
 def apply(
     url: str = typer.Argument(..., help="Any job listing URL."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Fill everything, stop before submit."),
-    review: bool = typer.Option(False, "--review", help="Open the filled form for you to check."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Prepare the documents; never open a browser."),
+    review: bool = typer.Option(False, "--review", help="Fill every field, then hand you the browser."),
+    submit: bool = typer.Option(False, "--submit", help="Actually send it. This cannot be undone."),
 ) -> None:
-    """One-shot: give it a link, it does the rest."""
+    """One-shot: give it a link, it does the rest.
+
+    Defaults to whatever the autonomy level says, which ships as "involved" --
+    documents prepared, nothing opened. The three flags override that for this
+    one run, which is deliberately easier to reason about than editing
+    settings and forgetting.
+    """
     settings, profile = _load()
+    if sum(map(bool, (dry_run, review, submit))) > 1:
+        con.print("[red]Pick one of --dry-run, --review, --submit.[/red]")
+        raise typer.Exit(1)
     if dry_run:
         settings.set("apply.mode", "dry_run")
     elif review:
         settings.set("apply.mode", "review")
+    elif submit:
+        # Said out loud, because the whole system is otherwise built to make
+        # this hard to do by accident.
+        settings.set("apply.mode", "auto")
+        con.print("[yellow]--submit: this will send the application. "
+                  "There is no undo.[/yellow]")
 
     from .pipeline import apply_to_url
     try:
