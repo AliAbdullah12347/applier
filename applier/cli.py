@@ -531,6 +531,70 @@ def outreach_harvest(
                   f"drafting. Add one, or drop them.[/dim]")
 
 
+@reach_app.command("for-job")
+def outreach_for_job(
+    target: str = typer.Argument(..., help="A job URL, or the id of a job already stored."),
+    limit: int = typer.Option(12, help="How many people to keep."),
+) -> None:
+    """Find people worth contacting about one posting. Nothing is sent.
+
+    Only sources that state who someone is are used: a contact address the
+    posting itself publishes, schema.org Person entries on the company's own
+    team page, and public members of a GitHub organisation that corroborates
+    the company. Reading names out of arbitrary markup was tried and removed --
+    it produced "Blog Trust" and "Chief Executive Officer" as people, and an
+    invented recipient is worse than finding nobody.
+    """
+    settings, _profile = _load()
+    from .db import get_db
+    from .discover import sources as S
+    from .outreach.discover import ContactStore
+    from .outreach.forjob import people_for_job, resolve_employer
+
+    db = get_db()
+    if target.isdigit():
+        row = db.one("SELECT * FROM jobs WHERE id=?", (int(target),))
+        if not row:
+            con.print(f"[red]no job with id {target}[/red]")
+            raise typer.Exit(1)
+        job = dict(row)
+    else:
+        raw = S.fetch_single(target)
+        if raw is None:
+            con.print(f"[red]could not fetch {target}[/red]")
+            raise typer.Exit(1)
+        job = dict(db.one("SELECT * FROM jobs WHERE id=?", (db.upsert_job(raw.to_row()),)))
+
+    domain, how = resolve_employer(job, settings, db)
+    con.print(f"[bold]{job['company']}[/bold] — {job['title']}")
+    con.print(f"[dim]employer domain: {domain or 'not established'} ({how or 'none'})[/dim]")
+    if how == "guessed":
+        con.print("[yellow]That domain was guessed from the company name and is not "
+                  "stated anywhere.[/yellow] Addresses are withheld until you confirm "
+                  "it under outreach.company_domains in settings.")
+
+    people = people_for_job(job, settings, db, limit=limit)
+    if not people:
+        con.print("\n[yellow]Nobody found from a source worth trusting.[/yellow]")
+        con.print("[dim]Used: the posting's own contact address, schema.org Person "
+                  "entries on the company site, and corroborated GitHub org members. "
+                  "A company publishing none of those needs `outreach harvest --csv`, "
+                  "which is ten minutes by hand and a better list anyway.[/dim]")
+        raise typer.Exit(0)
+
+    store = ContactStore(db, settings)
+    t = Table(box=None, pad_edge=False)
+    for c in ("name", "role", "reach them at", "why them"):
+        t.add_column(c)
+    for p in people:
+        store.upsert(p)
+        t.add_row(p.name, (p.role or "—")[:28],
+                  p.email or p.profile_url, (p.hook_fact or "—")[:46])
+    con.print(t)
+    con.print(f"\n[green]{len(people)}[/green] contact(s) stored. "
+              f"`applier outreach draft` writes the messages; nothing is ever sent.")
+
+
 @reach_app.command("draft")
 def outreach_draft(
     limit: int = typer.Option(4, help="How many to draft (respects the daily cap)."),

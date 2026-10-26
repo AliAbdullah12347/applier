@@ -120,6 +120,7 @@ route("POST", "/api/bank/import")(api.import_bank)
 route("POST", "/api/bank/preview")(api.preview_bank)
 
 route("GET", "/api/outreach")(api.list_contacts)
+route("POST", "/api/outreach/for-job")(api.start_for_job)
 route("POST", "/api/outreach/harvest")(api.start_harvest)
 route("POST", "/api/outreach/draft")(api.start_draft)
 route("POST", "/api/outreach/{contact_id}/stage")(lambda b, contact_id, **k: api.set_contact_stage(b, contact_id=_int(contact_id), **k))

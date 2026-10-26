@@ -41,6 +41,7 @@ PARITY: dict[str, tuple[str, ...]] = {
     "asks":     ("GET /api/asks", "POST /api/asks/{ask_id}"),
     "status":   ("GET /api/state",),
     "outreach-harvest": ("POST /api/outreach/harvest",),
+    "outreach-for-job": ("POST /api/outreach/for-job",),
     "outreach-draft":   ("POST /api/outreach/draft",),
     "outreach-list":    ("GET /api/outreach",),
     "bank-import":  ("POST /api/bank/import",),

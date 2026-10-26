@@ -727,6 +727,70 @@ def list_contacts(_body=None, **_kw) -> dict:
             "pending": sum(1 for c in contacts if c["stage"] == "harvested")}
 
 
+def start_for_job(body=None, **_kw) -> dict:
+    """Find people worth contacting about one posting.
+
+    Takes a job_id already in the table, or a URL to fetch. Nothing is sent:
+    this fills the contact list, and drafting stays a separate, capped step.
+    """
+    body = body or {}
+    job_id = body.get("job_id")
+    url = (body.get("url") or "").strip()
+    if not job_id and not url:
+        raise ApiError("give a job_id or a url")
+    if url and not re.match(r"^https?://", url):
+        raise ApiError("url must be http(s)")
+
+    def work(task: Task):
+        from ..outreach.discover import ContactStore
+        from ..outreach.forjob import people_for_job, resolve_employer
+        settings, _profile = _cfg()
+        con = console_for(task)
+        db = get_db()
+
+        if job_id:
+            row = db.one("SELECT * FROM jobs WHERE id=?", (int(job_id),))
+            if not row:
+                raise ValueError(f"no job with id {job_id}")
+            job = dict(row)
+        else:
+            from ..discover import sources as S
+            raw = S.fetch_single(url)
+            if raw is None:
+                raise ValueError(f"could not fetch {url}")
+            job = dict(db.one("SELECT * FROM jobs WHERE id=?", (db.upsert_job(raw.to_row()),)))
+
+        domain, how = resolve_employer(job, settings, db)
+        con.print(f"{job['company']} — {job['title']}")
+        con.print(f"employer domain: {domain or 'not established'} ({how or 'none'})")
+        if how == "guessed":
+            con.print("[yellow]guessed from the company name — addresses are withheld "
+                      "until you confirm it in outreach.company_domains[/yellow]")
+
+        people = people_for_job(job, settings, db, limit=int(body.get("limit") or 12))
+        if not people:
+            con.print("[yellow]nobody found from a source worth trusting.[/yellow]")
+            con.print("GitHub org members and schema.org team pages are the only "
+                      "sources used; a company that publishes neither needs the "
+                      "manual CSV route.")
+            return {"found": 0, "domain": domain, "how": how, "people": []}
+
+        store = ContactStore(db, settings)
+        out = []
+        for p in people:
+            store.upsert(p)
+            con.print(f"  {p.name} — {p.role or 'role unknown'} "
+                      f"({p.email or p.profile_url})")
+            out.append({"name": p.name, "role": p.role, "email": p.email,
+                        "profile_url": p.profile_url, "source": p.source,
+                        "hook_fact": p.hook_fact})
+        con.print(f"[green]{len(out)}[/green] contact(s) stored. "
+                  f"Draft with `applier outreach draft`; nothing is ever sent.")
+        return {"found": len(out), "domain": domain, "how": how, "people": out}
+
+    return {"task": RUNNER.start("outreach:for-job", work)}
+
+
 def start_harvest(body=None, **_kw) -> dict:
     body = body or {}
     kind = body.get("kind")
