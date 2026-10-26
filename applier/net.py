@@ -127,9 +127,18 @@ def guarded_get(url: str, *, timeout: float = DEFAULT_TIMEOUT,
                         body.extend(chunk)
                         if len(body) > max_bytes:
                             break
+                    # iter_bytes has already decompressed the body, so the
+                    # transfer headers now describe something that no longer
+                    # exists. Carrying them over made httpx decompress the
+                    # plain bytes a second time and raise DecodingError --
+                    # which is an HTTPError, so it was swallowed and every
+                    # gzipped response in the world came back as None.
+                    headers = httpx.Headers(
+                        [(k, v) for k, v in response.headers.multi_items()
+                         if k.lower() not in ("content-encoding", "content-length")])
                     return httpx.Response(
                         status_code=response.status_code,
-                        headers=response.headers,
+                        headers=headers,
                         content=bytes(body[:max_bytes]),
                         request=response.request,
                     )

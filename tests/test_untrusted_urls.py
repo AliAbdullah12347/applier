@@ -140,7 +140,7 @@ def test_a_hostile_job_description_cannot_make_the_app_call_itself():
     them -- and a 200 from the static tree would then be parsed as a company
     website.
     """
-    from applier.outreach.forjob import _domains_in, employer_domain
+    from applier.outreach.forjob import _domains_in, resolve_employer
 
     hostile = (
         "Great opportunity! See http://127.0.0.1:8765/api/state and "
@@ -151,13 +151,20 @@ def test_a_hostile_job_description_cannot_make_the_app_call_itself():
            "url": "https://job-boards.greenhouse.io/hostile/jobs/1",
            "description": hostile}
 
-    # Two independent reasons nothing happens, and both are worth keeping.
     # The link extractor requires a real TLD, so a bare address is never even
     # treated as a domain...
     assert _domains_in(hostile) == []
-    # ...and the guard would refuse it regardless, which is the reason that
-    # does not depend on an accident of a regular expression.
-    assert employer_domain(job, None, None) == ""
+
+    # ...and nothing in that description is ever accepted as evidence. The
+    # resolver may still fall through to guessing the company name as a
+    # domain -- "Hostile" finds a real hostile.com -- but a guess is marked
+    # as one and can never produce an address, which is the property that
+    # matters. What must never happen is `described`: that would mean a link
+    # from the description was fetched and believed.
+    _domain, how = resolve_employer(job, None, None)
+    assert how != "described", (
+        "a link from a hostile job description was fetched and trusted")
+    assert how in ("", "guessed")
 
 
 def test_every_outreach_fetch_goes_through_the_guard():
@@ -188,3 +195,61 @@ def test_the_browser_is_not_opened_on_a_private_url():
     from applier.outreach.people import fetch_rendered
     assert fetch_rendered("http://127.0.0.1:8765/") == ""
     assert fetch_rendered("file:///etc/passwd") == ""
+
+
+# --------------------------------------------------------------------------- #
+# the guard must not break ordinary fetching
+# --------------------------------------------------------------------------- #
+class _Gzipped(BaseHTTPRequestHandler):
+    def do_GET(self):                                 # noqa: N802
+        import gzip
+        body = gzip.compress(b'{"name":"Wikimedia"}')
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):                        # noqa: D102
+        pass
+
+
+@pytest.fixture
+def gzip_server():
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Gzipped)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        yield srv.server_port
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_a_gzipped_response_survives_the_guard(monkeypatch, gzip_server):
+    """The regression that made the guard silently useless.
+
+    iter_bytes already decompresses, so carrying the original
+    Content-Encoding onto the rebuilt response made httpx decompress the
+    plain bytes a second time. The resulting DecodingError is an HTTPError,
+    so it was swallowed and the fetch returned None -- for every gzipped
+    response, which is most of the web. Nothing raised, nothing logged;
+    outreach simply stopped finding anyone.
+    """
+    import json
+
+    monkeypatch.setattr("applier.net.is_public_url", lambda _u: True)
+    body = guarded_text(f"http://127.0.0.1:{gzip_server}/")
+    assert body, "a gzipped response came back empty"
+    assert json.loads(body)["name"] == "Wikimedia"
+
+
+def test_the_rebuilt_response_does_not_claim_an_encoding_it_no_longer_has(
+        monkeypatch, gzip_server):
+    monkeypatch.setattr("applier.net.is_public_url", lambda _u: True)
+    r = guarded_get(f"http://127.0.0.1:{gzip_server}/")
+    assert r is not None
+    # content-length is legitimately re-added by httpx for the decoded body;
+    # content-encoding is the one that must not survive, because it describes
+    # a compression that has already been undone.
+    assert "content-encoding" not in {k.lower() for k in r.headers}

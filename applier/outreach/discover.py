@@ -318,13 +318,16 @@ class ContactStore:
     def upsert(self, p: Person) -> int:
         self.db.run(
             "INSERT INTO contacts(person_key,name,company,domain,email,role,source,"
-            "hook_fact,hook_source_url,stage) VALUES(?,?,?,?,?,?,?,?,?,'harvested') "
+            "profile_url,github,hook_fact,hook_source_url,stage) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,'harvested') "
             "ON CONFLICT(person_key) DO UPDATE SET "
             "email=COALESCE(NULLIF(excluded.email,''),contacts.email),"
+            "profile_url=COALESCE(NULLIF(excluded.profile_url,''),contacts.profile_url),"
+            "github=COALESCE(NULLIF(excluded.github,''),contacts.github),"
             "hook_fact=COALESCE(NULLIF(excluded.hook_fact,''),contacts.hook_fact),"
             "hook_source_url=COALESCE(NULLIF(excluded.hook_source_url,''),contacts.hook_source_url)",
             (p.key, p.name, p.company, p.domain, p.email, p.role, p.source,
-             p.hook_fact, p.hook_source_url),
+             p.profile_url, p.github, p.hook_fact, p.hook_source_url),
         )
         row = self.db.one("SELECT id FROM contacts WHERE person_key=?", (p.key,))
         return int(row["id"]) if row else 0

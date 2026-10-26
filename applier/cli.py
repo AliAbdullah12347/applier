@@ -695,6 +695,15 @@ def outreach_for_job(
               f"`applier outreach draft` writes the messages; nothing is ever sent.")
 
 
+def _col(row, name: str) -> str:
+    """A column that an older row may not have."""
+    try:
+        value = row[name]
+    except (KeyError, IndexError):
+        return ""
+    return value or ""
+
+
 @reach_app.command("draft")
 def outreach_draft(
     limit: int = typer.Option(4, help="How many to draft (respects the daily cap)."),
@@ -704,7 +713,8 @@ def outreach_draft(
     from .db import get_db
     from .llm import Router
     from .outreach.discover import ContactStore, Person
-    from .outreach.draft import NoHookError, draft_message, save_batch
+    from .outreach.draft import (NoChannelError, NoHookError,
+                             draft_message, save_batch)
 
     db = get_db()
     store = ContactStore(db, settings)
@@ -722,6 +732,7 @@ def outreach_draft(
         p = Person(name=row["name"] or "", company=row["company"] or "",
                    domain=row["domain"] or "", role=row["role"] or "",
                    email=row["email"] or "", source=row["source"] or "",
+                   profile_url=_col(row, "profile_url"), github=_col(row, "github"),
                    hook_fact=row["hook_fact"] or "",
                    hook_source_url=row["hook_source_url"] or "")
         ok, why = store.can_contact(p)
@@ -733,6 +744,12 @@ def outreach_draft(
             con.print(f"  [green]drafted[/green] {p.name}")
         except NoHookError as e:
             skipped.append(str(e).split(":", 1)[0] + ": no verifiable hook")
+        except NoChannelError as e:
+            # Deliberately not folded into the hook message above. These were
+            # one exception, so a contact with a perfectly good hook and a
+            # dropped channel reported "no verifiable hook" and sent me
+            # looking in entirely the wrong place.
+            skipped.append(str(e))
         except Exception as e:
             skipped.append(f"{p.name}: {e}")
 

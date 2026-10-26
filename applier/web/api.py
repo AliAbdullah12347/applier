@@ -865,7 +865,8 @@ def start_draft(body=None, **_kw) -> dict:
     def work(task: Task):
         from ..llm.router import Router
         from ..outreach.discover import ContactStore, Person
-        from ..outreach.draft import NoHookError, draft_message, save_batch
+        from ..outreach.draft import (NoChannelError, NoHookError,
+                              draft_message, save_batch)
         settings, profile = _cfg()
         con = console_for(task)
         db = get_db()
@@ -883,6 +884,8 @@ def start_draft(body=None, **_kw) -> dict:
             p = Person(name=row["name"] or "", company=row["company"] or "",
                        domain=row["domain"] or "", role=row["role"] or "",
                        email=row["email"] or "", source=row["source"] or "",
+                       profile_url=row.get("profile_url") or "",
+                       github=row.get("github") or "",
                        hook_fact=row["hook_fact"] or "",
                        hook_source_url=row["hook_source_url"] or "")
             ok, why = store.can_contact(p)
@@ -895,6 +898,8 @@ def start_draft(body=None, **_kw) -> dict:
                 con.print(f"  drafted: {p.name} ({p.company})")
             except NoHookError:
                 skipped.append(f"{p.name}: no verifiable hook — dropped rather than padded")
+            except NoChannelError as e:
+                skipped.append(str(e))
             except Exception as e:
                 skipped.append(f"{p.name}: {e}")
 

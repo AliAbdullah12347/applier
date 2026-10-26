@@ -32,6 +32,10 @@ from ..tailor.context import candidate_brief
 from .discover import Person, channel_for
 
 
+class NoChannelError(RuntimeError):
+    """Nowhere to send it. Not the same as having nothing to say."""
+
+
 class NoHookError(RuntimeError):
     """Raised when there is no citable reason to contact this person."""
 
@@ -106,7 +110,14 @@ def draft_message(person: Person, profile: Config, settings: Config, router,
 
     channel, target = channel_for(person)
     if channel == "unknown":
-        raise NoHookError(f"{person.name}: no usable contact channel")
+        # Reported separately from the hook failure above. The two were the
+        # same exception, so "no verifiable hook" was printed for contacts
+        # whose hook was perfectly good and whose channel had been dropped on
+        # the way into the database -- which sent me looking in the wrong
+        # place entirely.
+        raise NoChannelError(
+            f"{person.name}: no way to reach them — no email, no GitHub "
+            f"handle, no profile page")
 
     voice = profile.get("voice", {})
     brief = candidate_brief(profile, include_contact=False)

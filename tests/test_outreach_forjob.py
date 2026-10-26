@@ -252,3 +252,37 @@ def test_a_campus_posting_prefers_recruiters_over_engineers():
     ]
     ranked = FJ.rank(people, {"title": "Summer Associate, Campus Programme"})
     assert ranked[0].name == "Campus Person"
+
+
+# --------------------------------------------------------------------------- #
+# a contact you cannot reach is not a contact
+# --------------------------------------------------------------------------- #
+def test_the_contacts_table_can_store_a_channel():
+    """Without these columns every GitHub contact was undraftable.
+
+    GitHub org members are the best structured source this has, and none of
+    them has a public email. Their channel is a profile URL, which the table
+    had nowhere to put -- so the drafter refused all of them, reporting "no
+    verifiable hook" for contacts whose hook was perfectly good.
+    """
+    from applier.db import SCHEMA
+
+    for column in ("profile_url", "github"):
+        assert column in SCHEMA, f"contacts cannot store {column}"
+
+
+def test_a_missing_channel_is_reported_as_a_missing_channel():
+    from applier.outreach.draft import NoChannelError, NoHookError
+    assert NoChannelError is not NoHookError, (
+        "the two failures are one exception again; that is what made the "
+        "message point at the wrong thing")
+
+
+def test_a_github_contact_has_a_usable_channel():
+    from applier.outreach.discover import Person, channel_for
+
+    p = Person(name="A. Craze", github="accraze",
+               profile_url="https://github.com/accraze")
+    channel, target = channel_for(p)
+    assert channel != "unknown"
+    assert target

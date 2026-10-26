@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -158,6 +158,8 @@ CREATE TABLE IF NOT EXISTS contacts (
     email           TEXT,
     role            TEXT,
     source          TEXT,
+    profile_url     TEXT,          -- a page about them; often the only channel
+    github          TEXT,          -- their handle, when that is how you reach them
     hook_fact       TEXT,
     hook_source_url TEXT,          -- a draft with no real source URL is blocked
     stage           TEXT NOT NULL DEFAULT 'harvested',
@@ -248,6 +250,14 @@ class Database:
                 if "weak_key" not in cols:
                     conn.execute("ALTER TABLE jobs ADD COLUMN weak_key TEXT")
                     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_weak ON jobs(weak_key)")
+                # Added in version 3. Without these, a contact reachable only
+                # through a profile page had no channel at all -- which is
+                # every GitHub contact, and GitHub is the best structured
+                # source there is, so the drafter refused all of them.
+                ccols = {r[1] for r in conn.execute("PRAGMA table_info(contacts)")}
+                for col in ("profile_url", "github"):
+                    if col not in ccols:
+                        conn.execute(f"ALTER TABLE contacts ADD COLUMN {col} TEXT")
                 self._ready = True
                 self._pending_merge = bool(prev) and int(prev[0]) < 2
                 self._pending_backfill = True
