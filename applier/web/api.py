@@ -25,7 +25,8 @@ from typing import Any
 from .. import autonomy
 from ..config import (
     CONFIG_DIR, Config, ConfigError, get_secret, load_profile, load_settings,
-    data_path, patch_settings, project_paths, redact, save_profile, set_secret, unanswered,
+    data_path, patch_settings, project_paths, redact, resolve_asset,
+    save_profile, set_secret, unanswered,
 )
 from ..db import get_db
 from .tasks import RUNNER, Task, console_for
@@ -1181,6 +1182,35 @@ PROFILE_WRITABLE = {
     "demographics.gender", "demographics.ethnicity", "demographics.ethnicity_detail",
     "demographics.disability_status", "demographics.veteran_status",
     "compensation.expected_hourly_usd", "compensation.expected_salary_usd",
+
+    # Added after the Profile tab reported "24 fields still say ASK" to
+    # somebody who had filled in every field it offered. Those 24 were exactly
+    # the ones with no input anywhere in the application: `unanswered()` walks
+    # the whole profile, the panel only rendered what was listed here, and the
+    # difference was unreachable. Preflight then blocked on
+    # non_us_qualifier -- a required answer with nowhere to type it.
+    "identity.preferred_name",
+    "work_authorization.answers.non_us_qualifier",
+
+    # Education. The resume header, the graduation gate and several form
+    # questions all read these.
+    "education[0].institution", "education[0].location", "education[0].degree",
+    "education[0].majors[0]", "education[0].majors[1]", "education[0].gpa",
+    "education[0].start", "education[0].end",
+    "education[0].expected_graduation", "education[0].cip_code",
+    "education[0].honors[0]", "education[0].honors[1]",
+
+    "availability.earliest_start", "availability.latest_end",
+    "availability.relocation_notes",
+
+    "references[0].name", "references[0].title", "references[0].org",
+    "references[0].email", "references[0].relationship",
+    "references[0].may_contact",
+
+    "languages[0].language", "languages[0].level",
+    "languages[1].language", "languages[1].level",
+
+    "links.portfolio",
 }
 
 
@@ -1253,7 +1283,9 @@ def put_secret(body, **_kw) -> dict:
 # --------------------------------------------------------------------------- #
 def run_privacy_audit(_body=None, **_kw) -> dict:
     """Run the same audit that gates a push, from the GUI."""
-    script = PATHS["root"] / "scripts" / "audit_privacy.py"
+    # Same: the audit script is part of the program. The packaged app said
+    # "audit script not found" because it was looking beside the database.
+    script = resolve_asset("scripts/audit_privacy.py")
     if not script.exists():
         raise ApiError("audit script not found", 500)
     proc = subprocess.run([sys.executable, str(script)], capture_output=True,
@@ -1275,7 +1307,11 @@ def get_extension(_body=None, **_kw) -> dict:
     assemble the pairing string itself without the token ever being part of a
     response body.
     """
-    ext = PATHS["root"] / "extension"
+    # Ships with the program, so it is found through resolve_asset rather
+    # than under the data directory. A packaged install reported "No extension
+    # found at %LOCALAPPDATA%\\applier\\extension" -- a directory the
+    # extension was never going to be in, because nothing copies it there.
+    ext = resolve_asset("extension")
     manifest = ext / "manifest.json"
     info: dict[str, Any] = {
         "path": str(ext),

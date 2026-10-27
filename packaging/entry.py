@@ -16,7 +16,9 @@ With no arguments, it opens the window.
 from __future__ import annotations
 
 import multiprocessing
+import os
 import sys
+from pathlib import Path
 
 
 def main() -> int:
@@ -24,6 +26,22 @@ def main() -> int:
     # library that spawns a process re-launches the whole executable instead,
     # and the app opens itself in an endless loop of windows.
     multiprocessing.freeze_support()
+
+    # Playwright's browsers are hundreds of megabytes and are not bundled.
+    # Inside a frozen build the driver otherwise looks for them next to
+    # itself, in the temporary unpack directory, and reports
+    # "Executable doesn't exist at ...\\_MEI...\\.local-browsers\\chromium".
+    # Point it at the per-user location `playwright install` actually writes
+    # to, unless the user has already chosen one.
+    if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+        if sys.platform == "win32":
+            base = Path(os.environ.get("LOCALAPPDATA")
+                        or Path.home() / "AppData" / "Local") / "ms-playwright"
+        elif sys.platform == "darwin":
+            base = Path.home() / "Library" / "Caches" / "ms-playwright"
+        else:
+            base = Path.home() / ".cache" / "ms-playwright"
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(base)
 
     # Seed the per-user data directory before anything tries to read it. The
     # window did this itself; the CLI did not, so `applier.exe doctor` on a

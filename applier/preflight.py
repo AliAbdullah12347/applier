@@ -116,6 +116,31 @@ def _check_bank(settings: Config) -> Check:
                      f"{len(problems)} lint problem(s): {problems[0]}"[:200],
                      blocking=True,
                      fix="`applier bank lint` lists them all.")
+
+    # A fresh install is seeded with the shipped example so that nothing
+    # crashes before a profile exists. Running on it produces a resume with
+    # four placeholder bullets -- which then fails verification for having
+    # almost no extractable text, and reports that as a rendering problem.
+    # The rendering is fine. The bank is a sample.
+    from .config import ASSETS
+
+    example = ASSETS / "config" / "bank" / "atoms.example.yaml"
+    mine = bank_dir / "atoms.yaml"
+    try:
+        is_example = (example.is_file() and mine.is_file()
+                      and example.read_bytes() == mine.read_bytes())
+    except OSError:
+        is_example = False
+    if is_example:
+        return Check(
+            "content bank", False,
+            f"still the bundled example ({len(bank.atoms)} placeholder bullets)",
+            blocking=True,
+            fix="Every application would carry a sample resume. Paste your "
+                "master resume into the Resume tab and press Save and rebuild, "
+                "or bring an existing install across with `applier backup` "
+                "and `applier backup --restore <file>`.")
+
     return Check("content bank", True,
                  f"{len(bank.atoms)} bullets, {len(getattr(bank, 'roles', {}))} entries, lint clean")
 
@@ -186,9 +211,19 @@ def _check_browser(settings: Config) -> Check:
             browser = pw.chromium.launch(headless=True)
             browser.close()
     except Exception as exc:                            # noqa: BLE001
-        return Check("browser", False, f"chromium will not start: {exc}"[:160],
-                     blocking=needs,
-                     fix="`playwright install chromium`")
+        detail = str(exc)
+        hint = "playwright install chromium"
+        if "Executable doesn't exist" in detail or "_MEI" in detail:
+            # The packaged build does not carry browsers; they are hundreds of
+            # megabytes and are installed once per machine.
+            hint = ("The browsers are not part of this download. Install them "
+                    "once with:  playwright install chromium  (or, with no "
+                    "Python on this machine, run the same command from any "
+                    "Python that has playwright installed). They land in a "
+                    "per-user folder and every future version finds them.")
+        return Check("browser", False,
+                     f"chromium will not start: {detail.splitlines()[0][:120]}",
+                     blocking=needs, fix=hint)
     return Check("browser", True,
                  "chromium starts" + ("" if needs else " (not needed at this autonomy level)"))
 

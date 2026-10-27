@@ -14,6 +14,7 @@ keychain. That way `settings.yaml` stays safe to commit.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -236,15 +237,29 @@ class Config:
         return node
 
     def set(self, dotted: str, value: Any) -> None:
-        parts = dotted.split(".")
-        node = self._data
-        for part in parts[:-1]:
-            nxt = node.get(part)
-            if not isinstance(nxt, dict):
-                nxt = {}
-                node[part] = nxt
-            node = nxt
-        node[parts[-1]] = value
+        """Write a value at a dotted path, creating whatever is missing.
+
+        Understands list indices -- `education[0].institution` -- because that
+        is the shape `unanswered()` reports. Without it, the one function that
+        tells you which answers are missing names paths that the one function
+        that writes answers cannot address, so twenty-four fields could be
+        reported as unset forever with no way to set them.
+        """
+        node: Any = self._data
+        parts = _path_parts(dotted)
+        for part, index in parts[:-1]:
+            node = _descend(node, part, index, create=True)
+        part, index = parts[-1]
+        if index is None:
+            node[part] = value
+        else:
+            target = node.get(part)
+            if not isinstance(target, list):
+                target = []
+                node[part] = target
+            while len(target) <= index:
+                target.append(None)
+            target[index] = value
 
     def require(self, dotted: str) -> Any:
         return self.get(dotted)
@@ -437,6 +452,44 @@ def patch_settings(updates: dict[str, Any]) -> Config:
         yaml.safe_dump(scratch.raw, fh, sort_keys=False, allow_unicode=True, width=100)
     tmp.replace(p)
     return load_settings(reload=True)
+
+
+_INDEXED = re.compile(r"^(.*?)\[(\d+)\]$")
+
+
+def _path_parts(dotted: str) -> list[tuple[str, int | None]]:
+    """Split a dotted path into (key, list index or None) pairs."""
+    out: list[tuple[str, int | None]] = []
+    for raw in str(dotted).split("."):
+        m = _INDEXED.match(raw)
+        if m:
+            out.append((m.group(1), int(m.group(2))))
+        else:
+            out.append((raw, None))
+    return out
+
+
+def _descend(node: Any, part: str, index: int | None, *, create: bool) -> Any:
+    """One step down a path, making the container if it is missing."""
+    if index is None:
+        nxt = node.get(part) if isinstance(node, dict) else None
+        if not isinstance(nxt, dict):
+            if not create:
+                return {}
+            nxt = {}
+            node[part] = nxt
+        return nxt
+    seq = node.get(part) if isinstance(node, dict) else None
+    if not isinstance(seq, list):
+        if not create:
+            return {}
+        seq = []
+        node[part] = seq
+    while len(seq) <= index:
+        seq.append({})
+    if not isinstance(seq[index], dict):
+        seq[index] = {}
+    return seq[index]
 
 
 def unanswered(cfg: Config) -> list[str]:

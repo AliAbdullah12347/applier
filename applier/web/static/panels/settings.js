@@ -64,9 +64,20 @@ function failed(host, e) {
   clear(host).appendChild(el('div', { class: 'banner bad' }, e.message));
 }
 
-/** Read a dotted path out of a nested object. */
+/** Read a dotted path out of a nested object, including list indices.
+ *
+ * `education[0].institution` is the shape the server reports an unanswered
+ * field in, so it has to be the shape this can read one back out of --
+ * otherwise the input renders empty and saving it looks like a change when
+ * nothing changed. */
 function dig(obj, path) {
-  return path.split('.').reduce((o, k) => (o === null || o === undefined ? o : o[k]), obj);
+  return path.split('.').reduce((o, seg) => {
+    if (o === null || o === undefined) return o;
+    const m = /^(.*?)\[(\d+)\]$/.exec(seg);
+    if (!m) return o[seg];
+    const list = o[m[1]];
+    return Array.isArray(list) ? list[Number(m[2])] : undefined;
+  }, obj);
 }
 
 /* GET /api/settings runs its payload through redact(), which masks any value
@@ -546,11 +557,17 @@ async function renderLimits(host) {
 }
 
 /* -------------------------------------------------------------- profile -- */
-const GROUP_ORDER = ['identity', 'address', 'work_authorization', 'demographics', 'compensation'];
+const GROUP_ORDER = ['identity', 'address', 'work_authorization', 'education',
+  'availability', 'languages', 'links', 'references', 'demographics', 'compensation'];
 const GROUP_LABEL = {
   identity: 'Identity',
   address: 'Address',
   work_authorization: 'Work authorisation',
+  education: 'Education',
+  availability: 'Availability',
+  languages: 'Languages',
+  links: 'Links',
+  references: 'References',
   demographics: 'Demographics',
   compensation: 'Compensation' };
 /* Words that look wrong when they are merely capitalised. */
@@ -566,7 +583,18 @@ function prettify(seg) {
  * address.permanent.line1 would both read "Line 1" — so the middle segments
  * stay in the label. */
 function labelFor(path) {
-  return path.split('.').slice(1).map(prettify).join(' · ');
+  return path.split('.').slice(1).map((seg) => {
+    const m = /^(.*?)\[(\d+)\]$/.exec(seg);
+    // A second entry needs to be distinguishable from the first, but a lone
+    // one should not be labelled "#1" for no reason.
+    return m ? prettify(m[1]) + (Number(m[2]) ? ` #${Number(m[2]) + 1}` : '')
+             : prettify(seg);
+  }).join(' · ');
+}
+
+/** The group a field belongs to, ignoring any list index. */
+function groupOf(path) {
+  return path.split('.')[0].replace(/\[\d+\]$/, '');
 }
 
 async function renderProfile(host, ctx) {
@@ -590,7 +618,7 @@ async function renderProfile(host, ctx) {
 
   const groups = new Map();
   for (const path of writable) {
-    const g = path.split('.')[0];
+    const g = groupOf(path);
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(path);
   }

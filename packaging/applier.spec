@@ -38,6 +38,8 @@ datas = [
     # The browser extension, so Settings can point at a real folder.
     (str(ROOT / "extension"), "extension"),
     (str(ROOT / "docs"), "docs"),
+    # The privacy audit and the family check are run from the app.
+    (str(ROOT / "scripts"), "scripts"),
 ]
 datas = [(src, dst) for src, dst in datas if Path(src).exists()]
 
