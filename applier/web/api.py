@@ -713,16 +713,38 @@ def _drafts_dir() -> Path:
     return PATHS["out"] / "outreach" / "by-contact"
 
 
+def _ready_to_send(contact: dict) -> str:
+    """The whole message as you would paste it, address included.
+
+    Assembled server-side so that every surface -- the web UI, the terminal,
+    the extension -- copies exactly the same thing, and so that "send this"
+    is one action rather than three fields to reassemble by hand.
+    """
+    channel = str(contact.get("draft_channel") or "email")
+    target = str(contact.get("draft_target") or "")
+    subject = str(contact.get("draft_subject") or "")
+    body = str(contact.get("draft_body") or "")
+    if channel == "email":
+        return f"To: {target}\nSubject: {subject}\n\n{body}\n"
+    # On GitHub or a profile there is no subject line; leading with it would
+    # read as a copied email, which is the opposite of the intention.
+    return f"{body}\n\n[send via {channel}: {target}]\n"
+
+
 def list_contacts(_body=None, **_kw) -> dict:
     db = get_db()
     rs = db.q("SELECT * FROM contacts ORDER BY "
               "CASE stage WHEN 'drafted' THEN 0 WHEN 'harvested' THEN 1 ELSE 2 END, "
               "company COLLATE NOCASE, name COLLATE NOCASE LIMIT 500")
     contacts = _rows(rs)
-    d = _drafts_dir()
+    # The draft lives on the row now. It used to be looked for in a
+    # per-contact markdown file that nothing ever wrote -- save_batch writes
+    # one combined file -- so the Draft column was permanently empty and the
+    # only way to read a message was to go and find it on disk.
     for c in contacts:
-        f = d / f"{c['person_key']}.md"
-        c["draft"] = f.read_text(encoding="utf-8", errors="replace") if f.is_file() else None
+        body = c.get("draft_body") or ""
+        c["draft"] = body or None
+        c["ready"] = _ready_to_send(c) if body else None
     return {"contacts": contacts,
             "stages": sorted({c["stage"] for c in contacts}),
             "pending": sum(1 for c in contacts if c["stage"] == "harvested")}

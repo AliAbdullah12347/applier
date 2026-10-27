@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -160,6 +160,12 @@ CREATE TABLE IF NOT EXISTS contacts (
     source          TEXT,
     profile_url     TEXT,          -- a page about them; often the only channel
     github          TEXT,          -- their handle, when that is how you reach them
+    draft_subject   TEXT,          -- the written message, kept so a screen can
+    draft_body      TEXT,          -- show it; the file on disk is for reading
+    draft_channel   TEXT,          -- email | github | profile
+    draft_target    TEXT,          -- the actual address or URL to send to
+    drafted_at      TEXT,
+    job_id          INTEGER,       -- the posting this was written about
     hook_fact       TEXT,
     hook_source_url TEXT,          -- a draft with no real source URL is blocked
     stage           TEXT NOT NULL DEFAULT 'harvested',
@@ -255,9 +261,13 @@ class Database:
                 # every GitHub contact, and GitHub is the best structured
                 # source there is, so the drafter refused all of them.
                 ccols = {r[1] for r in conn.execute("PRAGMA table_info(contacts)")}
-                for col in ("profile_url", "github"):
+                for col in ("profile_url", "github", "draft_subject",
+                            "draft_body", "draft_channel", "draft_target",
+                            "drafted_at"):
                     if col not in ccols:
                         conn.execute(f"ALTER TABLE contacts ADD COLUMN {col} TEXT")
+                if "job_id" not in ccols:
+                    conn.execute("ALTER TABLE contacts ADD COLUMN job_id INTEGER")
                 self._ready = True
                 self._pending_merge = bool(prev) and int(prev[0]) < 2
                 self._pending_backfill = True

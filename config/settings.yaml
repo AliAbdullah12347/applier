@@ -389,6 +389,14 @@ integrity:
 # The caps below are enforced in code, not suggested.
 # ----------------------------------------------------------------------------
 outreach:
+  # Find the people and write the message while applying, rather than leaving
+  # it as a separate task. The referral is worth more than the application and
+  # the moment to send it is now; a chore deferred is a chore skipped.
+  # Nothing is ever sent -- this produces a name, an address and a finished
+  # message, so that sending it is a copy and a click.
+  auto_for_applications: true
+  max_per_application: 3
+
   enabled: true
 
   # Hard caps. The drafter refuses to generate beyond these rather than warning.

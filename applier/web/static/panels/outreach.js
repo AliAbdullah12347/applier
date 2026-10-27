@@ -209,7 +209,7 @@ function renderContacts(host, contacts) {
         el('th', {}, 'Company'),
         el('th', {}, 'Channel'),
         el('th', { class: 'shrink' }, 'Stage'),
-        el('th', { class: 'shrink' }, 'Draft'))),
+        el('th', { class: 'shrink' }, 'Message'))),
       tbody)));
 
   draw();
@@ -298,9 +298,19 @@ function contactRow(c, tbody) {
 }
 
 function draftRow(c) {
-  const pre = el('pre', { class: 'jd' }, c.draft);
+  // `ready` is the whole message as you would paste it: the address, the
+  // subject, then the body. Showing the body alone and copying the body alone
+  // means retyping the recipient into the mail client, which is most of the
+  // friction this feature exists to remove.
+  const full = c.ready || c.draft;
+  const pre = el('pre', { class: 'jd' }, full);
 
   const meta = [];
+  if (c.draft_target) {
+    meta.push(el('div', { class: 'small' },
+      el('span', { class: 'dim' }, `Send via ${c.draft_channel || 'email'}: `),
+      el('span', { class: 'mono' }, c.draft_target)));
+  }
   if (c.hook_fact) meta.push(el('div', { class: 'dim small' }, `Hook: ${c.hook_fact}`));
   // hook_source_url comes off an employer or GitHub page, so only an http(s)
   // value is ever put in an href — a javascript: URL must not become a link.
@@ -313,7 +323,12 @@ function draftRow(c) {
   }
 
   const bar = el('div', { class: 'row u-mt-8px' },
-    el('button', { class: 'btn btn-sm', onclick: () => copyDraft(c.draft, pre) }, 'Copy message'),
+    el('button', { class: 'btn btn-primary btn-sm',
+      onclick: () => copyDraft(full, pre) }, 'Copy whole email'),
+    c.draft_target && (c.draft_channel || 'email') === 'email'
+      ? el('button', { class: 'btn btn-sm',
+          onclick: () => copyDraft(c.draft_target, pre) }, 'Copy address only')
+      : null,
     el('span', { class: 'dim small' },
       'Read it before you send it. Nothing leaves this machine on its own.'));
 

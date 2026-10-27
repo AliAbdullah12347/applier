@@ -207,6 +207,23 @@ def follow_up(draft: Draft, profile: Config, router) -> Draft:
     )
 
 
+def store_draft(db: Database, draft: "Draft", *, job_id: int | None = None) -> None:
+    """Keep the written message on the contact row.
+
+    It was only ever written to a markdown file, so the screen that lists
+    contacts had a "Draft" column with nothing to put in it and the only way
+    to read a message was to find the file. The point of drafting is to have
+    something you can send in the next thirty seconds.
+    """
+    db.run(
+        "UPDATE contacts SET stage='drafted', draft_subject=?, draft_body=?, "
+        "draft_channel=?, draft_target=?, drafted_at=?, "
+        "job_id=COALESCE(?, job_id) WHERE person_key=?",
+        (draft.subject, draft.body, draft.channel, draft.target, now(),
+         job_id, draft.person.key),
+    )
+
+
 def save_batch(drafts: list[Draft], out_dir: Path, db: Database) -> Path:
     """Write a review file you can read top to bottom in one sitting."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -222,6 +239,6 @@ def save_batch(drafts: list[Draft], out_dir: Path, db: Database) -> Path:
         parts.append(f"\n\n## {i}. {d.person.name}\n\n```\n{d.render()}```\n")
     path.write_text("".join(parts), encoding="utf-8")
     for d in drafts:
-        db.run("UPDATE contacts SET stage='drafted' WHERE person_key=?", (d.person.key,))
+        store_draft(db, d)
     db.log("outreach_drafted", f"{len(drafts)} drafts", path=str(path))
     return path

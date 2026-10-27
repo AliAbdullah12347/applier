@@ -287,6 +287,11 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         if base and Path(base).exists():
             resume_path = Path(base)
 
+    # Reaching out belongs to applying, not to a separate chore later, so it
+    # happens in every mode -- including the one that never opens a browser.
+    if settings.get("outreach.auto_for_applications", True):
+        _outreach_for_application(job, settings, profile, db, router, artifact, con)
+
     if mode == "dry_run":
         db.run("UPDATE applications SET status='ready', artifact_dir=? WHERE job_id=?",
                (str(artifact), job_id))
@@ -543,6 +548,81 @@ def _enter_application(sess, page, con, *, hops: int = 2) -> bool:
         if not clicked:
             break
     return _fillable_count(page) >= 2
+
+
+def _outreach_for_application(job: dict, settings: Config, profile: Config,
+                              db: Database, router, artifact: Path, con) -> int:
+    """Find who to write to about this posting, and write to them.
+
+    Applying and reaching out are one action in practice -- the referral is
+    worth more than the application and the moment to send it is now, while
+    the posting is open and the resume that matches it exists. Doing it as a
+    separate chore later means not doing it.
+
+    Nothing is sent. What this produces is a name, an address and a finished
+    message sitting on the application, so that sending it is a copy and a
+    click rather than an evening's work.
+
+    Never raises. Outreach is an enhancement to an application; a company
+    with no public team page should cost a thinner result, not a failed run.
+    """
+    from .outreach.discover import ContactStore
+    from .outreach.draft import (NoChannelError, NoHookError, draft_message,
+                                 store_draft)
+    from .outreach.forjob import people_for_job
+
+    try:
+        limit = int(settings.get("outreach.max_per_application", 3))
+        people = people_for_job(job, settings, db, limit=max(1, limit) * 2)
+        if not people:
+            return 0
+
+        store = ContactStore(db, settings)
+        written = 0
+        blocked: list[str] = []
+        for person in people:
+            if written >= limit:
+                break
+            store.upsert(person)
+            ok, why = store.can_contact(person)
+            if not ok:
+                blocked.append(f"{person.name}: {why}")
+                continue
+            try:
+                draft = draft_message(person, profile, settings, router, job=job)
+            except (NoHookError, NoChannelError) as exc:
+                blocked.append(str(exc))
+                continue
+            except Exception as exc:                    # noqa: BLE001
+                blocked.append(f"{person.name}: {exc}")
+                continue
+            store_draft(db, draft, job_id=int(job["id"]))
+            written += 1
+
+        if written:
+            path = artifact / "outreach.md"
+            rows = db.q(
+                "SELECT name, role, draft_channel, draft_target, draft_subject, "
+                "draft_body, hook_source_url FROM contacts WHERE job_id=? "
+                "AND draft_body IS NOT NULL", (int(job["id"]),))
+            parts = [f"# Outreach — {job['company']}\n",
+                     "\nNothing here has been sent. Copy one and send it yourself.\n"]
+            for r in rows:
+                parts.append(
+                    f"\n\n## {r['name']} — {r['role'] or 'role unknown'}\n\n"
+                    f"**{r['draft_channel']}:** {r['draft_target']}\n\n"
+                    f"**Subject:** {r['draft_subject']}\n\n"
+                    f"{r['draft_body']}\n\n"
+                    f"_why them: {r['hook_source_url']}_\n")
+            path.write_text("".join(parts), encoding="utf-8")
+            con.print(f"[green]outreach[/green] {written} draft(s) ready — "
+                      f"Outreach tab, or {path.name}")
+        elif blocked:
+            con.print(f"[dim]outreach: nobody contactable ({blocked[0][:70]})[/dim]")
+        return written
+    except Exception as exc:                            # noqa: BLE001
+        con.print(f"[dim]outreach unavailable ({exc})[/dim]")
+        return 0
 
 
 def _record_submission(db: Database, job: dict, settings: Config) -> None:
