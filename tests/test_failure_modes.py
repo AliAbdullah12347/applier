@@ -184,3 +184,48 @@ def test_an_unwritable_artifact_directory_fails_loudly(tmp_path, monkeypatch):
     report = verify_pdf(missing, expect_keywords=[], contact=[],
                         claims_used={}, settings=_S())
     assert report.ok is False, "a missing PDF verified as sound"
+
+
+# --------------------------------------------------------------------------- #
+# the one attachment that matters
+# --------------------------------------------------------------------------- #
+def test_a_failed_tailor_with_no_fallback_stops_the_application():
+    """It used to print a yellow line and carry on.
+
+    `links.resume_pdf` pointed at a file that did not exist, so a tailoring
+    failure meant the run continued, the form was filled, and the one field
+    that matters was left empty. An application with no resume attached is
+    worse than one not sent.
+    """
+    import inspect
+
+    from applier import pipeline
+
+    src = inspect.getsource(pipeline._execute_application)
+    assert "raise TailorError(" in src, (
+        "a tailoring failure with no fallback no longer stops the run")
+    assert "no resume attached is worse" in src
+
+
+def test_the_fallback_resume_is_resolved_against_the_data_directory():
+    """A packaged app is launched from wherever its shortcut points."""
+    import inspect
+
+    from applier import pipeline
+
+    src = inspect.getsource(pipeline._execute_application)
+    assert "data_path(base)" in src, (
+        "links.resume_pdf is resolved against the working directory again")
+
+
+def test_tailor_error_is_imported_where_the_handler_can_see_it():
+    """If the import were the failure, the handler would raise NameError and
+    bury the real cause."""
+    import inspect
+
+    from applier import pipeline
+
+    src = inspect.getsource(pipeline._execute_application)
+    import_at = src.index("from .tailor.pipeline import TailorError")
+    try_at = src.index("    try:\n        from .tailor.pipeline import build_documents")
+    assert import_at < try_at

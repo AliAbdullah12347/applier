@@ -277,15 +277,34 @@ def _execute_application(job: dict, settings: Config, profile: Config,
 
     # --- tailored documents ------------------------------------------------ #
     resume_path = cover_path = None
+    # Imported outside the try: the handler raises TailorError, and if the
+    # import itself were the thing that failed the handler would raise
+    # NameError instead and bury the real cause.
+    from .tailor.pipeline import TailorError
     try:
         from .tailor.pipeline import build_documents
         resume_path, cover_path = build_documents(job, settings, profile, router, artifact)
         con.print(f"[green]tailored[/green] resume -> {resume_path.name if resume_path else 'n/a'}")
     except Exception as e:
-        con.print(f"[yellow]tailoring unavailable ({e}); using base resume[/yellow]")
+        # Resolved against the data directory, not the working directory: a
+        # packaged app is launched from wherever its shortcut points.
         base = profile.get("links.resume_pdf", None)
-        if base and Path(base).exists():
-            resume_path = Path(base)
+        candidate = data_path(base) if base else None
+        if candidate and candidate.exists():
+            resume_path = candidate
+            con.print(f"[yellow]tailoring unavailable ({e}); "
+                      f"falling back to {candidate.name}[/yellow]")
+        else:
+            # Nothing to attach. Sending an application without a resume is
+            # worse than not sending it, and this used to be a yellow line
+            # that scrolled past: the run continued, the form was filled, and
+            # the one field that matters was left empty.
+            raise TailorError(
+                f"tailoring failed ({e}) and there is no fallback resume at "
+                f"{candidate or 'links.resume_pdf (unset)'}. Set links.resume_pdf "
+                f"to a PDF that exists, or fix the tailoring error above — an "
+                f"application with no resume attached is worse than none."
+            ) from e
 
     # Reaching out belongs to applying, not to a separate chore later, so it
     # happens in every mode -- including the one that never opens a browser.
