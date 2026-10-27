@@ -91,3 +91,21 @@ def test_the_autonomy_check_says_whether_it_will_submit():
     from applier import preflight
     src = inspect.getsource(preflight._check_autonomy)
     assert "submits automatically" in src and "never submits" in src
+
+
+def test_the_gui_run_button_checks_what_the_run_command_checks():
+    """Two front doors must not disagree about whether this is safe to start.
+
+    The gate was only on `applier run`. The button beside it in the app
+    started an unattended run with no checks at all -- on an install whose
+    content bank was still the bundled example and whose autonomy level said
+    "submits automatically".
+    """
+    import inspect
+
+    from applier.web import api
+
+    src = inspect.getsource(api.start_run)
+    assert "run_preflight" in src, "the GUI run path does not preflight"
+    assert "skip_preflight" in src, "there is no deliberate override"
+    assert "not report.ok" in src

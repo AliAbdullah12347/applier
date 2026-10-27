@@ -351,12 +351,32 @@ def start_run(body=None, **_kw) -> dict:
     once = bool(body.get("once"))
     level = body.get("level")
 
+    skip_preflight = bool(body.get("skip_preflight"))
+
     def work(task: Task):
         from ..pipeline import autonomous_loop
         settings, profile = _cfg()
         if level:
             lvl = autonomy.apply_level(settings, level)
             task.emit(f"autonomy: {lvl.label} — {lvl.blurb}")
+
+        # The same gate `applier run` applies. It was only on the command, so
+        # the button next to it started an unattended run with no checks at
+        # all -- two front doors disagreeing about whether this is safe to
+        # start, which is the one thing they must never do.
+        if not skip_preflight:
+            from ..preflight import run_preflight
+            report = run_preflight(settings, profile, deep=True)
+            if not report.ok:
+                lines = "; ".join(f"{c.name}: {c.detail}"
+                                  for c in report.blocking_failures)
+                task.emit(f"preflight failed — not starting. {lines}")
+                raise RuntimeError(
+                    "preflight failed: " + lines +
+                    ". Settings > Maintenance > Run preflight shows the detail, "
+                    "or start anyway with skip_preflight.")
+            task.emit("preflight clear")
+
         autonomous_loop(settings, profile, max_apps=max_apps, once=once,
                         console=console_for(task),
                         should_stop=lambda: task.stop_requested)
