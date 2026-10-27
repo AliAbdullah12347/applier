@@ -128,8 +128,14 @@ discovery:
 # SEARCH DEFINITION — which roles to look for. Edit freely.
 # ----------------------------------------------------------------------------
 search:
+  # Which kind of thing you are looking for. "internship" covers internships,
+  # co-ops and placements; "job" covers new-grad programmes and full-time
+  # openings. Postings of the other kind are set aside rather than discarded,
+  # so switching brings them straight back.
+  mode: "internship"                # internship | job
+
   seasons: ["Summer 2027", "Summer 2028"]   # the cycles you are targeting
-  role_kinds: ["internship"]        # add "new_grad" / "full_time" when the time comes
+  role_kinds: ["internship"]        # superseded by `mode`; kept for older configs
 
   titles_include:
     - software engineer

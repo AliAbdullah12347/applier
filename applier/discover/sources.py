@@ -138,6 +138,13 @@ def domain_from_url(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def _classify_role(job: dict[str, Any]) -> str:
+    """Imported lazily: roles.py has no dependencies here, but this module is
+    imported during startup and the cycle is easier to avoid than to explain."""
+    from ..roles import classify
+    return classify(job)
+
+
 @dataclass
 class RawJob:
     company: str
@@ -164,7 +171,14 @@ class RawJob:
             "title": self.title, "location": self.location,
             "country": guess_country(self.location), "remote": int(self.remote),
             "url": self.url, "apply_url": self.url, "description": self.description,
-            "season": self.season, "role_kind": self.role_kind, "posted_at": self.posted_at,
+            "season": self.season,
+            # Classified from the posting rather than taken from the dataclass
+            # default, which was "internship" for everything ever recorded --
+            # so a Staff Engineer opening sat in the queue as an internship.
+            "role_kind": self.role_kind if self.role_kind in ("new_grad", "full_time")
+                         else _classify_role({"title": self.title,
+                                              "description": self.description}),
+            "posted_at": self.posted_at,
         }
 
 

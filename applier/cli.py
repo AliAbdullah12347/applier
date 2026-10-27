@@ -445,6 +445,40 @@ def backup(
 
 
 @app.command()
+def mode(
+    to: str = typer.Argument(None, help="internship or job. Omit to see where you are."),
+) -> None:
+    """Internships, or jobs. Two searches that want different resumes.
+
+    An internship is gated on still being enrolled; a new-grad or full-time
+    posting is gated on having finished. Postings of the other kind are set
+    aside rather than discarded, so switching back costs nothing.
+    """
+    _load()
+    from .web import api as _api
+
+    try:
+        data = _api.set_mode({"mode": to}) if to else _api.get_mode()
+    except Exception as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    if to:
+        con.print(f"[green]switched[/green] to {data['mode']}\n")
+
+    t = Table(box=None, pad_edge=False)
+    for c in ("", "mode", "covers", "postings"):
+        t.add_column(c)
+    for m in data["modes"]:
+        here = "[cyan]>[/cyan]" if m["key"] == data["mode"] else " "
+        t.add_row(here, m["label"], ", ".join(m["kinds"]), str(m["postings"]))
+    con.print(t)
+    con.print(f"\n[dim]{next(m['blurb'] for m in data['modes'] if m['key'] == data['mode'])}[/dim]")
+    if to:
+        con.print("[dim]Run `applier rank` to refill the queue.[/dim]")
+
+
+@app.command()
 def preflight(
     quick: bool = typer.Option(False, "--quick", help="Skip the render, the model call and the browser."),
 ) -> None:

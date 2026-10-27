@@ -1145,6 +1145,47 @@ def put_models(body, **_kw) -> dict:
     return {"ok": True, **get_models()}
 
 
+# --------------------------------------------------------------------------- #
+# what kind of thing we are looking for
+# --------------------------------------------------------------------------- #
+def get_mode(_body=None, **_kw) -> dict:
+    settings, _ = _cfg()
+    from .. import roles
+
+    db = get_db()
+    counts = {k: 0 for k in roles.KINDS}
+    for row in db.q("SELECT role_kind, COUNT(*) n FROM jobs GROUP BY role_kind"):
+        kind = str(row["role_kind"] or "")
+        if kind in counts:
+            counts[kind] = int(row["n"])
+    current = roles.current(settings)
+    return {
+        "mode": current,
+        "modes": [
+            {"key": m.key, "label": m.label, "blurb": m.blurb,
+             "kinds": list(m.kinds),
+             "postings": sum(counts.get(k, 0) for k in m.kinds)}
+            for m in roles.MODES.values()
+        ],
+        "counts": counts,
+    }
+
+
+def set_mode(body, **_kw) -> dict:
+    from .. import roles
+
+    key = str((body or {}).get("mode") or "").strip().lower()
+    if key not in roles.MODES:
+        raise ApiError(f"mode must be one of {', '.join(roles.MODES)}")
+    patch_settings({"search.mode": key})
+    # Re-ranking is what actually moves postings in and out of the queue, and
+    # it is cheap compared with discovery, so the switch is not left half
+    # applied until the next run.
+    db = get_db()
+    db.run("UPDATE jobs SET status='new' WHERE status='out_of_scope'")
+    return {"ok": True, **get_mode()}
+
+
 def set_autonomy(body, **_kw) -> dict:
     level = (body or {}).get("level")
     if level not in autonomy.LEVELS:

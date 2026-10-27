@@ -169,6 +169,56 @@ function checkField(label, key, checked, hint) {
 }
 
 /* ------------------------------------------------------------- autonomy -- */
+/* Two different questions that both sound like "mode".
+ *
+ * This one is WHAT you are looking for -- internships or jobs. The dial below
+ * is HOW MUCH happens without you. They are adjacent because people reach for
+ * them in the same moment, and labelled plainly because conflating them means
+ * either applying to the wrong kind of posting or submitting when you meant
+ * to review. */
+async function searchModeCard(ctx) {
+  const card = el('div', { class: 'card' },
+    el('h2', {}, 'Looking for',
+      el('span', { class: 'sub' }, 'internships, or jobs')));
+
+  let data;
+  try {
+    data = await get('/api/mode');
+  } catch (e) {
+    card.appendChild(el('div', { class: 'banner bad' }, e.message));
+    return card;
+  }
+
+  const choices = el('div', {});
+  for (const m of data.modes) {
+    const on = m.key === data.mode;
+    const row = el('label', { class: `pick${on ? ' on' : ''}` },
+      el('input', {
+        type: 'radio', name: 'search-mode', value: m.key, checked: on || null,
+        onchange: async () => {
+          try {
+            const next = await post('/api/mode', { mode: m.key });
+            toast(`Now looking for ${next.mode === 'job' ? 'jobs' : 'internships'}`, 'ok');
+            if (ctx && ctx.refresh) ctx.refresh();
+          } catch (err) {
+            toast(err.message, 'bad');
+          }
+        },
+      }),
+      el('div', { class: 'u-c3-2' },
+        el('div', { class: 'u-c2-2' }, m.label,
+          ' ', pill(`${m.postings} posting${m.postings === 1 ? '' : 's'}`,
+                    m.postings ? 'info' : 'warn')),
+        el('div', { class: 'dim small' }, m.blurb)));
+    choices.appendChild(row);
+  }
+  card.appendChild(choices);
+  card.appendChild(el('p', { class: 'muted small u-mt-10px' },
+    'Postings of the other kind are set aside, not deleted — switching brings '
+    + 'them straight back. Run a rank afterwards to refill the queue.'));
+  return card;
+}
+
 async function renderAutonomy(host, ctx) {
   loading(host, 'Loading the current mode…');
   let s;
@@ -215,7 +265,7 @@ async function renderAutonomy(host, ctx) {
       'Changing the level also rewrites apply.mode and the auto-apply score threshold on the Limits tab, '
       + 'because those two are what the level actually means.'));
 
-  host.append(card, note);
+  host.append(await searchModeCard(ctx), card, note);
 }
 
 /* -------------------------------------------------------- model and keys -- */

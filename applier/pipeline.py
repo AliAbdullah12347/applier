@@ -172,8 +172,21 @@ def rank_jobs(settings: Config, profile: Config, *, enrich: bool = True,
     out: list[dict] = []
     min_q = float(settings.get("search.min_score_to_queue", 0.55))
 
+    from . import roles
+
+    mode = roles.MODES[roles.current(settings)]
+    wrong_kind = 0
+
     for r in rows:
         job = dict(r)
+        # A posting of the wrong kind is not rejected, it is simply not for
+        # this search: it stays in the table at its own score so that
+        # switching mode brings it back without re-discovering anything.
+        if not roles.in_scope(job, settings):
+            wrong_kind += 1
+            db.run("UPDATE jobs SET status='out_of_scope' WHERE id=? "
+                   "AND status<>'applied'", (job["id"],))
+            continue
         gate = check_gates(job, settings, profile, db)
         sc = score_job(job, settings, profile, gate)
         db.run(
@@ -192,6 +205,9 @@ def rank_jobs(settings: Config, profile: Config, *, enrich: bool = True,
                         "description_missing": thin})
 
     out.sort(key=lambda j: -j["score"])
+    if wrong_kind:
+        con.print(f"[dim]{wrong_kind} set aside as not {mode.label.lower()} "
+                  f"- `applier mode` switches[/dim]")
     con.print(f"[dim]scored {len(rows)}, queued {len(out)}[/dim]")
     return out
 
