@@ -106,6 +106,11 @@ def test_tags_only_vouch_when_the_entry_actually_occupies_the_page(bank):
     A quantitative-trading resume ended with "macOS, Windows, iOS, Android,
     ticketing, escalation" because the service desk contributed a single
     pinned bullet and its tag list was taken at face value.
+
+    `floor=0` because the floor is a different mechanism: it tops a thin
+    result back up from the master file in the file's own order, and that
+    top-up reaches `ticketing` by itself. Leaving it on tested the backstop
+    and read the result as vouching.
     """
     from applier.tailor.bank import TAG_VOUCH_MIN_BULLETS
 
@@ -115,10 +120,13 @@ def test_tags_only_vouch_when_the_entry_actually_occupies_the_page(bank):
     for atom, _ in sel.atoms:
         counts[atom.group] = counts.get(atom.group, 0) + 1
 
-    out = bank.skills_for(jd, sel)
-    if counts.get("exp_desk", 0) < TAG_VOUCH_MIN_BULLETS:
-        assert "ticketing" not in out, (
-            "a barely-present entry vouched for a skill no bullet mentions")
+    # Stated rather than assumed: the assertion below was wrapped in this as
+    # a condition, so for as long as the desk held the page the test passed
+    # by never checking anything.
+    assert counts.get("exp_desk", 0) < TAG_VOUCH_MIN_BULLETS, (
+        "this posting is meant to leave the desk barely present")
+    assert "ticketing" not in bank.skills_for(jd, sel, floor=0), (
+        "a barely-present entry vouched for a skill no bullet mentions")
 
 
 # --------------------------------------------------------------------------- #

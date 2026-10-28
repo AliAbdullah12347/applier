@@ -81,6 +81,99 @@ WRAP_COLUMN = 112
 # stub: the point is to stop bullets wrapping, not to strip the page bare.
 SHORTEN_KEEPS = 0.7
 
+# Sections whose entries are positions held between two dates.
+#
+# A resume prints those newest first, and a reader checks that the dates
+# descend before reading a word of them. Ordering Experience by relevance put
+# the best-matching role at the top, which is what tailoring is for -- and
+# printed Jan 2026, then May 2026, then May 2025, which reads as carelessness
+# whatever produced it. The dates are the one part of a resume a stranger is
+# qualified to audit on sight.
+#
+# Projects are deliberately not on this list. A project is a thing made, not a
+# post held: nobody checks that a portfolio runs backwards, and ranking those
+# by the posting is the whole point of having a bank. So relevance still
+# decides Experience -- which roles appear at all, and how many bullets each
+# one gets -- and chronology only decides the order they print in.
+CHRONOLOGICAL_SECTIONS = {"experience", "leadership"}
+
+# A date that has not ended yet sorts above every date that has.
+PRESENT = 10 ** 6
+
+# How many bullets an entry gets is the loudest thing a resume says about what
+# matters. A flat cap says it equally to everything, and that only became
+# visible once the page filled to the margin: the service desk took four lines
+# at the top of a research resume, not because the posting wanted support work
+# -- it scored 0.15 against a 0.72 top match -- but because four was the cap
+# and there was room left after the research was in.
+#
+# An entry well below the best match on the page is a supporting entry, and
+# gets a supporting entry's share of the space. Across the seven families the
+# shares cluster at 0.48 and below, then jump to 0.55 and up, so the line sits
+# in the gap -- but only just, and the nearest case to it is real: the AI
+# ethics paper scores 0.48 on a security posting and is treated as supporting.
+# That reads correctly (the adversarial-ML project is the security evidence
+# and keeps its four bullets), so the line stays where it is. Re-measure with
+# `scripts/check_families.py` before moving it. Pinned bullets are unaffected
+# -- a pin is a promise and this is a budget.
+SUPPORTING_SHARE = 0.5
+SUPPORTING_CAP = 2
+
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
+# A term is a date range spoken as one word. Each maps to the month it *ends*
+# in, because the end is what an entry is sorted on.
+_SEASONS = {"winter": 2, "spring": 5, "summer": 8, "fall": 12, "autumn": 12}
+_ONGOING = ("present", "current", "ongoing", "now")
+# "Aug 2024 -- Dec 2025", "Jul 2025 - Aug 2025", "2024 to 2025". A lone hyphen
+# only separates a range when it is spaced, so "Jan-Mar" keeps working and a
+# hyphenated word does not split.
+_RANGE = re.compile(r"\s*(?:-{2,}|[–—]|\bto\b|(?<=\s)-(?=\s))\s*", re.I)
+
+
+def _month_stamp(text: str) -> int | None:
+    """One end of a date range, as a sortable month number."""
+    t = (text or "").lower()
+    if any(w in t for w in _ONGOING):
+        return PRESENT
+    year = re.search(r"(?:19|20)\d{2}", t)
+    if not year:
+        return None
+    month = 12                      # a bare year sorts as the end of that year
+    for name, num in _MONTHS.items():
+        if re.search(rf"\b{name}", t):
+            month = num
+            break
+    else:
+        for name, num in _SEASONS.items():
+            if name in t:
+                month = num
+                break
+    return int(year.group(0)) * 12 + month
+
+
+def date_key(dates: str) -> tuple[int, int]:
+    """`(end, start)` for an entry's date line, most recent largest.
+
+    The bank stores dates as the text that prints -- "Aug 2024 -- Dec 2025",
+    "Fall 2025", "Jun 2022" -- because that is what you maintain by hand in
+    the master file. Sorting needs numbers, and those are different jobs:
+    nothing is allowed to normalise the stored string, or the resume would
+    start printing dates in a format you did not write.
+
+    An unparseable date sorts to the bottom rather than the top. An entry with
+    no date on it is not the most recent thing you did.
+    """
+    parts = [p for p in _RANGE.split(dates or "") if p.strip()]
+    stamps = [s for s in (_month_stamp(p) for p in parts) if s is not None]
+    if not stamps:
+        return (0, 0)
+    # max/min rather than first/last: a range is two endpoints, and which way
+    # round they were typed is not worth being strict about.
+    return (max(stamps), min(stamps))
+
+
 _SKILL_STOPWORDS = {"and", "or", "of", "the", "for", "with", "in", "on", "a"}
 
 
@@ -555,6 +648,23 @@ class Bank:
 
         chosen_ids: set[str] = set()
 
+        # The best this posting does with each entry, and with the bank as a
+        # whole. Both are read while fitting -- to size each entry's share of
+        # the page -- and again afterwards, to order what was chosen.
+        best_for_group: dict[tuple[str, str], float] = {}
+        for rel, a in scored:
+            key = (a.section, a.group)
+            if rel > best_for_group.get(key, float("-inf")):
+                best_for_group[key] = rel
+        best_overall = max((r for r, _ in scored), default=0.0)
+
+        def group_cap(atom: Atom) -> int:
+            if best_overall <= 0:
+                return max_per_group
+            share = best_for_group[(atom.section, atom.group)] / best_overall
+            return max_per_group if share >= SUPPORTING_SHARE else min(
+                max_per_group, SUPPORTING_CAP)
+
         def try_add(atom: Atom, rel: float, *, force: bool) -> bool:
             nonlocal used
             if atom.id in chosen_ids:
@@ -563,7 +673,7 @@ class Bank:
             if not force:
                 if per_section.get(atom.section, 0) >= int(limits.get("max_atoms", 6)):
                     return False
-                if per_group.get(atom.group, 0) >= max_per_group:
+                if per_group.get(atom.group, 0) >= group_cap(atom):
                     return False
             size = self._best_size(atom)
             if not size:
@@ -626,19 +736,32 @@ class Bank:
         # geometry and a graphics posting with a help desk -- in both cases
         # because that entry happened to carry a pin.
         #
-        # Entries are ordered by how well the role answers this posting, and
-        # bullets stay in the order they were written within their entry: a
-        # role's bullets are prose, and sorting them scrambles the narrative.
-        best_for_group: dict[tuple[str, str], float] = {}
-        for rel, a in scored:
-            key = (a.section, a.group)
-            if rel > best_for_group.get(key, float("-inf")):
-                best_for_group[key] = rel
+        # What replaces it depends on the section, because the two kinds of
+        # section are read differently. A dated position is checked against
+        # the one beneath it, so Experience runs newest first. A project is
+        # judged on what it is, so Projects runs best-match first. Bullets
+        # stay in the order they were written within their entry either way:
+        # a role's bullets are prose, and sorting them scrambles the narrative.
         written = {a.id: i for i, a in enumerate(self.atoms)}
-        chosen.sort(key=lambda pair: (
-            -best_for_group[(pair[0].section, pair[0].group)],
-            written[pair[0].id],
-        ))
+        # Where each entry sits in the master file. It is the last tiebreak,
+        # so two entries the posting cannot tell apart print in the order they
+        # were written rather than alphabetically -- the same fallback the
+        # bullets inside an entry already use.
+        first_written: dict[tuple[str, str], int] = {}
+        for i, a in enumerate(self.atoms):
+            first_written.setdefault((a.section, a.group), i)
+
+        def entry_order(atom: Atom) -> tuple[float, float, float, int]:
+            key = (atom.section, atom.group)
+            rel = best_for_group[key]
+            if atom.section in CHRONOLOGICAL_SECTIONS:
+                dates = str((self.roles.get(atom.group) or {}).get("dates", ""))
+                end, start = date_key(dates)
+                # Two roles still running are ordered by which began later.
+                return (-end, -start, -rel, first_written[key])
+            return (-rel, 0.0, 0.0, first_written[key])
+
+        chosen.sort(key=lambda pair: (entry_order(pair[0]), written[pair[0].id]))
 
         gaps = self._gaps(jd_tokens)
         coverage = len(chosen) / max(1, len(self.atoms))

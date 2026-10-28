@@ -29,7 +29,9 @@ sys.path.insert(0, str(ROOT))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from applier.config import load_profile, load_settings           # noqa: E402
-from applier.tailor.bank import WRAP_COLUMN, job_family           # noqa: E402
+from applier.config import data_path                              # noqa: E402
+from applier.tailor.bank import (                                  # noqa: E402
+    WRAP_COLUMN, Bank, date_key, job_family)
 from applier.tailor.pipeline import build_resume                  # noqa: E402
 from applier.tailor.render import extract_text, squeezed_words    # noqa: E402
 
@@ -92,13 +94,16 @@ def _page_fill(pdf: Path) -> float:
 
 def main() -> int:
     settings, profile = load_settings(), load_profile()
+    # Only for the date lines. The resumes themselves are built by
+    # `build_resume`, which loads its own bank the way the real run does.
+    roles = Bank(data_path(settings.get("tailor.bank_path", "config/bank"))).roles
     out = ROOT / "out" / "families"
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)
 
     print(f"{'family':9} {'resolved':9} {'pg':>2} {'ok':>5} {'sq':>3} {'skl':>3} "
-          f"{'blt':>3} {'wrap':>4} {'fill':>4}  leads with")
+          f"{'blt':>3} {'wrap':>4} {'fill':>4} {'desc':>4}  leads with")
     print("-" * 92)
 
     bad = 0
@@ -151,11 +156,32 @@ def main() -> int:
                 lead = lines[idx + 1]
                 break
 
-        wrong = (not report.ok or report.pages != 1 or squeezed or fam != want)
+        # Experience prints newest first, so a reader can check the dates
+        # descend before reading a word. Taken from the selection rather than
+        # the extracted text, because a date reached from a heading line is a
+        # guess and this needs to be exact. A date the parser cannot read
+        # sorts to the bottom, which shows up here as a run that stops
+        # descending -- usually a typo in the master file.
+        dated: list[tuple[str, tuple[int, int]]] = []
+        for atom, _size in _sel.atoms:
+            if atom.section != "experience":
+                continue
+            if dated and dated[-1][0] == atom.group:
+                continue
+            dated.append((atom.group,
+                          date_key(str((roles.get(atom.group) or {}).get("dates", "")))))
+        descends = all(a[1] >= b[1] for a, b in zip(dated, dated[1:]))
+
+        wrong = (not report.ok or report.pages != 1 or squeezed or fam != want
+                 or not descends)
         bad += bool(wrong)
         print(f"{want:9} {fam:9} {report.pages:>2} {str(report.ok):>5} "
               f"{len(squeezed):>3} {n_skills:>3} {n_bullets:>3} {n_wrap:>4} "
-              f"{fill:>3.0%}  {lead[:34]}{'  <-- CHECK' if wrong else ''}")
+              f"{fill:>3.0%} {'yes' if descends else 'NO ':>4}  "
+              f"{lead[:30]}{'  <-- CHECK' if wrong else ''}")
+        if not descends:
+            print(f"{'':9} out of order: "
+                  + " | ".join(g for g, _ in dated))
         if report.warnings:
             print(f"{'':9} warnings: {report.warnings[:2]}")
         if squeezed:
