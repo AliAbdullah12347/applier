@@ -212,21 +212,25 @@ def _check_browser(settings: Config) -> Check:
             browser = pw.chromium.launch(headless=True, **launch_kwargs())
             browser.close()
     except Exception as exc:                            # noqa: BLE001
-        detail = str(exc)
-        hint = "playwright install chromium"
-        if "Executable doesn't exist" in detail or "_MEI" in detail:
-            # The packaged build does not carry browsers; they are hundreds of
-            # megabytes and are installed once per machine.
-            from .browsers import install_hint
-            hint = install_hint() if "No Chromium" in install_hint() else hint
-            hint = ("The browsers are not part of this download. Install them "
-                    "once with:  playwright install chromium  (or, with no "
-                    "Python on this machine, run the same command from any "
-                    "Python that has playwright installed). They land in a "
-                    "per-user folder and every future version finds them.")
-        return Check("browser", False,
-                     f"chromium will not start: {detail.splitlines()[0][:120]}",
-                     blocking=needs, fix=hint)
+        # The old message quoted the path Playwright's driver *computed* and
+        # said nothing about the path this program actually searched. When
+        # those two disagree -- which is the entire reason applier.browsers
+        # exists -- the report described a file nobody had looked for, and
+        # the only remedy on offer was a terminal command from a library the
+        # reader never installed. Two unhelpful things at once.
+        from .browsers import describe_failure, diagnose
+
+        detail = str(exc).splitlines()[0]
+        d = diagnose()
+        return Check(
+            "browser", False,
+            f"chromium will not start: {describe_failure(detail)}"[:400],
+            blocking=needs,
+            fix=("Press \u201cInstall browser\u201d below, or run "
+                 "`applier browsers install`. It downloads Chromium once, "
+                 "into the per-user folder this program searches "
+                 f"({d['root']}), and every future version finds it. "
+                 "`applier browsers where` prints what is there now."))
     return Check("browser", True,
                  "chromium starts" + ("" if needs else " (not needed at this autonomy level)"))
 

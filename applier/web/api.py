@@ -1403,6 +1403,24 @@ def put_profile(body, **_kw) -> dict:
     return {"ok": True, "changed": changed}
 
 
+def get_browsers(_body=None, **_kw) -> dict:
+    """Where this program looked for a browser, and what it found there."""
+    from ..browsers import diagnose
+
+    return diagnose()
+
+
+def install_browser(_body=None, **_kw) -> dict:
+    """Download Chromium. Minutes, not seconds, so it runs as a task."""
+    from ..browsers import install
+
+    ok, message = install()
+    get_db().log("browser_install", message[:300], level="info" if ok else "error")
+    if not ok:
+        raise ApiError(message[:600])
+    return {"ok": True, "message": message}
+
+
 def check_acknowledgements(_body=None, **_kw) -> dict:
     """Scan the mailbox for employers acknowledging what we submitted.
 

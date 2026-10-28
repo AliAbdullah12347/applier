@@ -49,6 +49,8 @@ bank_app = typer.Typer(help="The master resume and content bank.")
 app.add_typer(bank_app, name="bank")
 notify_app = typer.Typer(help="Email about applications submitted in your name.")
 app.add_typer(notify_app, name="notify")
+browsers_app = typer.Typer(help="The Chromium this program drives.")
+app.add_typer(browsers_app, name="browsers")
 con = Console()
 
 
@@ -1221,6 +1223,48 @@ def evidence_cmd() -> None:
     con.print("")
     for level in LADDER:
         con.print(f"  [{colour.get(level, 'white')}]{level:14}[/] [dim]{MEANING[level]}[/dim]")
+
+
+# --------------------------------------------------------------------------- #
+# browsers
+# --------------------------------------------------------------------------- #
+@browsers_app.command("where")
+def browsers_where() -> None:
+    """What browser this program can find, and where it looked."""
+    from .browsers import diagnose
+
+    d = diagnose()
+    con.print(f"searched   {d['root']}"
+              + ("" if d["root_exists"] else "  [yellow](does not exist)[/yellow]"))
+    if d["env"]:
+        con.print(f"           [dim]from PLAYWRIGHT_BROWSERS_PATH={d['env']}[/dim]")
+    con.print(f"builds     {', '.join(d['builds']) or '[dim]none[/dim]'}")
+    for path in d["found"]:
+        con.print(f"  runnable {path}")
+    if d["chosen"]:
+        con.print(f"\n[green]using[/green] {d['chosen']}")
+    else:
+        con.print("\n[yellow]no usable Chromium.[/yellow] "
+                  "Run `applier browsers install`.")
+
+
+@browsers_app.command("install")
+def browsers_install() -> None:
+    """Download Chromium into the folder this program searches.
+
+    The same command the playwright CLI would run, run directly, so it works
+    in a packaged build where there is no `playwright` on PATH.
+    """
+    from .browsers import browsers_root, install
+
+    con.print(f"downloading chromium into {browsers_root()}\u2026 "
+              "[dim](a few hundred MB, once per machine)[/dim]")
+    ok, message = install()
+    if ok:
+        con.print(f"[green]{message}[/green]")
+        return
+    con.print(f"[red]install failed[/red]\n{message}")
+    raise typer.Exit(1)
 
 
 def main() -> None:

@@ -878,6 +878,30 @@ async function extensionCard() {
  * real PDF and makes a real model call, which costs a few seconds and a few
  * tokens. That is the right trade against a six-hour run that was never going
  * to work, but not against opening a settings tab. */
+/* Downloads Chromium into the folder this program searches. Minutes, not
+ * seconds, and the only thing to do meanwhile is wait, so the button says so
+ * and stays disabled rather than letting a second download start. */
+function installBrowserRow() {
+  const out = el('div', { class: 'dim small u-mt-4px' });
+  const btn = el('button', { class: 'btn btn-sm u-mt-4px' }, 'Install browser');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    clear(out).appendChild(el('span', {},
+      'Downloading Chromium — a few hundred megabytes, once per machine. '
+      + 'This can take several minutes.'));
+    try {
+      const r = await post('/api/browsers/install');
+      clear(out).appendChild(el('span', { class: 'ok' },
+        (r.message || 'installed') + ' — run preflight again.'));
+    } catch (e) {
+      clear(out).appendChild(el('span', { class: 'bad' }, e.message));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  return el('div', {}, btn, out);
+}
+
 function preflightCard() {
   const card = el('div', { class: 'card' },
     el('h2', {}, 'Preflight',
@@ -906,9 +930,12 @@ function preflightCard() {
           el('td', { class: 'shrink' }, c.name),
           el('td', { class: 'small dim' }, c.detail || '—')));
         if (!c.ok && c.fix) {
-          tb.appendChild(el('tr', {},
-            el('td', {}),
-            el('td', { colspan: '2', class: 'small' }, c.fix)));
+          /* The browser is the one failure with a repair the program can
+           * perform itself. Telling somebody to run `playwright install`
+           * is a fix that only works for people who did not need it. */
+          const cell = el('td', { colspan: '2', class: 'small' }, c.fix);
+          if (c.name === 'browser') cell.appendChild(installBrowserRow());
+          tb.appendChild(el('tr', {}, el('td', {}), cell));
         }
       }
       results.appendChild(el('table', {}, tb));
