@@ -559,11 +559,17 @@ def build_bank(master_path: Path, bank_dir: Path, *, write: bool = True) -> dict
     merged_claims = yaml.safe_load(yaml.safe_dump(existing_claims)) if existing_claims else {}
     _merge(merged_claims, new_claims)
 
+    # Ceilings, not targets. They exist so one section cannot eat the page,
+    # and the line budget plus the one-page verification decide what actually
+    # fits. At 3/10/5/2 they summed to 20, which every resume hit exactly --
+    # so the caps were the binding constraint and the budget that models the
+    # page was dead code. Raising the starting budget changed nothing at all,
+    # and pages came out an inch short of the margin.
     sections = {
-        "education": {"order": 1, "min_atoms": 0, "max_atoms": 3},
-        "experience": {"order": 2, "min_atoms": 3, "max_atoms": 10},
-        "projects": {"order": 3, "min_atoms": 1, "max_atoms": 5},
-        "leadership": {"order": 4, "min_atoms": 0, "max_atoms": 2},
+        "education": {"order": 1, "min_atoms": 3, "max_atoms": 4},
+        "experience": {"order": 2, "min_atoms": 3, "max_atoms": 14},
+        "projects": {"order": 3, "min_atoms": 1, "max_atoms": 9},
+        "leadership": {"order": 4, "min_atoms": 0, "max_atoms": 3},
     }
 
     doc = {

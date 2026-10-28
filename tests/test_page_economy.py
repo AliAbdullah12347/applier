@@ -204,3 +204,77 @@ def test_a_claim_slot_is_charged_at_the_width_it_renders(tmp_path):
     assert len(template) > len(rendered), "the slots should be wider than the ink"
     assert b._rendered_len(atom, "medium") == len(rendered)
     assert b._cost(atom, "medium", {"exp_num"}) == 1 + len(rendered) // WRAP_COLUMN
+
+
+# --------------------------------------------------------------------------- #
+# a section floor, and no atom twice
+# --------------------------------------------------------------------------- #
+FLOORED = """## Skills
+
+Languages: Python
+
+## Experience
+
+### Answers The Posting
+id: exp_match
+dates: 2026
+tags: python, kubernetes
+
+- Built Python services on Kubernetes that scaled
+  ~ Built Python services on Kubernetes.
+  ~~ Built services.
+- Ran Python workloads on Kubernetes in production
+  ~ Ran Python workloads on Kubernetes.
+  ~~ Ran workloads.
+- Tuned Python services on Kubernetes under load
+  ~ Tuned Python services on Kubernetes.
+  ~~ Tuned services.
+
+## Education
+
+### A Degree
+id: edu_degree
+dates: 2028
+tags: olympiad, mathematics
+
+- Gold medallist in a national mathematics olympiad
+  ~ Gold medallist in a national mathematics olympiad.
+  ~~ Olympiad gold medallist.
+"""
+
+
+@pytest.fixture
+def floored(tmp_path) -> Bank:
+    master = tmp_path / "master.md"
+    master.write_text(FLOORED, encoding="utf-8")
+    build_bank(master, tmp_path, write=True)
+    b = Bank(tmp_path)
+    b.sections["education"]["min_atoms"] = 1
+    return b
+
+
+def test_a_section_floor_survives_a_posting_that_never_mentions_it(floored):
+    """`min_atoms` sat in the config unread until the page filled up.
+
+    An olympiad medal scores nothing against a backend posting, so greedy
+    relevance drops it for one more project bullet. Relevance is right about
+    order and wrong about presence: a resume with nothing under the degree
+    line is not the better resume.
+    """
+    sel = floored.select("python kubernetes services", family="default",
+                         line_budget=6)
+    assert any(a.section == "education" for a, _ in sel.atoms)
+
+
+def test_the_floor_does_not_print_an_atom_twice(floored):
+    sel = floored.select("python kubernetes services olympiad mathematics",
+                         family="default", line_budget=60)
+    ids = [a.id for a, _ in sel.atoms]
+    assert len(ids) == len(set(ids)), f"repeated: {ids}"
+
+
+def test_a_floor_larger_than_the_section_does_not_loop(floored):
+    floored.sections["education"]["min_atoms"] = 99
+    sel = floored.select("python", family="default", line_budget=60)
+    ids = [a.id for a, _ in sel.atoms]
+    assert len(ids) == len(set(ids))

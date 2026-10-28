@@ -158,7 +158,13 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
         rung = ladder[min(attempt, len(ladder) - 1)]
         # Each attempt drops real content, not just whitespace. Tightening
         # spacing alone cannot take a 2-page resume to 1 page.
-        budget = int(budget_start * rung) - (attempt * 5)
+        #
+        # Three lines a rung, not five. Five made the first step down from an
+        # overflow drop eight lines -- four bullets -- and land further below
+        # the margin than the rung before it had been above it. Overshooting
+        # a one-page fit still gives a one-page PDF, so nothing complains:
+        # it just quietly ships a page with an inch of white at the bottom.
+        budget = int(budget_start * rung) - (attempt * 3)
         sel = bank.select(jd, family=family, line_budget=budget)
         sections = _group_selection(sel, bank)
         # Skills shrink with everything else. They used to be the one part of

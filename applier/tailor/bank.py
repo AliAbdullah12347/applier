@@ -530,8 +530,12 @@ class Bank:
         used = 0
         pinned_dropped: list[str] = []
 
+        chosen_ids: set[str] = set()
+
         def try_add(atom: Atom, rel: float, *, force: bool) -> bool:
             nonlocal used
+            if atom.id in chosen_ids:
+                return False
             limits = self.sections.get(atom.section, {})
             if not force:
                 if per_section.get(atom.section, 0) >= int(limits.get("max_atoms", 6)):
@@ -557,6 +561,7 @@ class Bank:
             _, used_claims = self.resolve(atom.text(size), strict=False)
             claims_used.update(used_claims)
             chosen.append((atom, size))
+            chosen_ids.add(atom.id)
             seen_groups.add(atom.group)
             per_section[atom.section] = per_section.get(atom.section, 0) + 1
             per_group[atom.group] = per_group.get(atom.group, 0) + 1
@@ -567,6 +572,24 @@ class Bank:
         for rel, a in [(r, a) for r, a in scored if a.pinned]:
             if not try_add(a, rel, force=True):
                 pinned_dropped.append(a.id)
+
+        # phase 1b -- the floor each section is worth keeping
+        #
+        # `min_atoms` had been in the config since the bank was written and
+        # nothing read it, which only became visible once the page filled up.
+        # Greedy relevance is right about order and wrong about presence: for
+        # a backend posting, olympiad medals score near zero against the
+        # description and lose their place to a fourth project bullet. They
+        # are not evidence of backend skill; they are evidence of the
+        # candidate, and a resume with no Education content under the degree
+        # line is not a better resume.
+        for section, limits in self.sections.items():
+            need = int(limits.get("min_atoms", 0))
+            for rel, a in scored:
+                if per_section.get(section, 0) >= need:
+                    break
+                if a.section == section:
+                    try_add(a, rel, force=True)
 
         # phase 2 -- best of the rest
         for rel, a in scored:
