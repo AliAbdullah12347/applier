@@ -328,6 +328,29 @@ class Audit:
         print("=" * 70)
         print("privacy audit")
         print("=" * 70)
+
+        # Every check below asks a question about a git repository: what is
+        # tracked, what the history holds, what .gitignore would let through.
+        # Run where there is no repository and all of them answer vacuously,
+        # which is how the packaged app produced "scanning 0 file(s)", a PASS
+        # nobody should trust, and seventeen warnings that files "WILL be
+        # committed" from a directory that will never be committed to
+        # anything. Saying the check does not apply is the honest result; a
+        # green PASS over zero files is not.
+        if not (ROOT / ".git").exists():
+            print()
+            print(f"  not a git checkout: {ROOT}")
+            print()
+            print("=" * 70)
+            print("NOT APPLICABLE — this audit is the gate on pushing the")
+            print("source repository to GitHub. There is nothing to push here.")
+            print()
+            print("Your own data lives in the data directory and is never")
+            print("committed anywhere; run this from a clone of the repo if")
+            print("you want to check the source before a push.")
+            print("=" * 70)
+            return 0
+
         for step in (self.scan_tracked, self.scan_history, self.check_ignored,
                      self.check_artifacts, self.check_templates,
                      self.check_profile_values_absent):

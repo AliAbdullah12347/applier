@@ -892,6 +892,7 @@ def bank_lint() -> None:
     from .tailor.bank import Bank
     b = Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
     problems = b.lint()
+    blocking = set(b.blocking_problems())
 
     retired, unchecked = [], []
     for sect, claims in (b.claims or {}).items():
@@ -910,11 +911,21 @@ def bank_lint() -> None:
     con.print(f"claims: verified/needs_check/retired = "
               f"{sum(1 for s,c in b.claims.items() if isinstance(c,dict) for x in c.values() if isinstance(x,dict) and x.get('status')=='verified')}"
               f"/{len(unchecked)}/{len(retired)}")
-    if problems:
-        con.print(f"\n[red]{len(problems)} problem(s):[/red]")
+    if blocking:
+        con.print(f"\n[red]{len(blocking)} problem(s) that stop a resume rendering:[/red]")
         for p in problems:
+            if p in blocking:
+                con.print(f"   - {p}")
+    advisory = [p for p in problems if p not in blocking]
+    if advisory:
+        # Said separately and said plainly. These used to be reported in the
+        # same red block as the rest and refused the render along with them,
+        # so a long sentence read as a broken installation.
+        con.print(f"\n[yellow]{len(advisory)} problem(s) that make a worse page, "
+                  f"not a wrong one — resumes still render:[/yellow]")
+        for p in advisory:
             con.print(f"   - {p}")
-    else:
+    if not problems:
         con.print("\n[green]bank is clean — every phrasing renders and every number traces.[/green]")
     if unchecked:
         con.print(f"\n[yellow]{len(unchecked)} number(s) still needs_check:[/yellow] "

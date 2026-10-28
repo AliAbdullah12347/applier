@@ -110,10 +110,10 @@ def _check_bank(settings: Config) -> Check:
                      blocking=True,
                      fix="Resume tab > Save and rebuild, or `applier bank import`.")
     bank = Bank(bank_dir)
-    problems = bank.lint()
-    if problems:
+    blocking = bank.blocking_problems()
+    if blocking:
         return Check("content bank", False,
-                     f"{len(problems)} lint problem(s): {problems[0]}"[:200],
+                     f"{len(blocking)} lint problem(s): {blocking[0]}"[:200],
                      blocking=True,
                      fix="`applier bank lint` lists them all.")
 

@@ -131,7 +131,7 @@ export async function render(ctx) {
   masterPane.append(statsRow, importNote, lintBox, editorCard, formatCard);
 
   renderStats(bank.stats);
-  renderLint(bank.lint);
+  renderLint(bank.lint, bank.blocking);
   syncButtons();
 
   function renderStats(s) {
@@ -150,7 +150,7 @@ export async function render(ctx) {
     );
   }
 
-  function renderLint(problems) {
+  function renderLint(problems, blocking) {
     clear(lintBox);
     const list = problems || [];
     if (!list.length) {
@@ -158,18 +158,31 @@ export async function render(ctx) {
         'No problems. Every phrasing renders and every number traces to a claim.'));
       return;
     }
-    // A lint problem is not cosmetic: the renderer refuses to emit a phrasing
-    // whose numbers it cannot trace, so each line here is a bullet that will
-    // silently never appear on a tailored resume.
-    const card = el('div', { class: 'card u-bordercolor-varbad' },
-      el('h2', {}, `${list.length} problem${list.length > 1 ? 's' : ''}`,
-        el('span', { class: 'sub' }, 'these phrasings cannot be rendered until fixed')));
-    for (const p of list) {
-      card.appendChild(el('div', { class: 'check bad' },
-        el('span', { class: 'mark' }, '✕'),
-        el('div', {}, el('div', { class: 'detail' }, String(p)))));
+    // Two kinds, and they read nothing alike. A number the renderer cannot
+    // trace means no resume comes out at all. A bullet too long for the
+    // column means a worse page. Both were shown in the same red block under
+    // "cannot be rendered until fixed", so twenty-five long sentences looked
+    // like a broken installation.
+    const stops = new Set(blocking || []);
+    const groups = [
+      [list.filter((p) => stops.has(p)), 'bad', '✕',
+       'no resume renders until these are fixed'],
+      [list.filter((p) => !stops.has(p)), 'warn', '!',
+       'worth fixing — the page is worse, not wrong. Resumes still render.'],
+    ];
+    for (const [items, tone, mark, sub] of groups) {
+      if (!items.length) continue;
+      const card = el('div', {
+        class: tone === 'bad' ? 'card u-bordercolor-varbad' : 'card u-bordercolor-varwarn' },
+        el('h2', {}, `${items.length} problem${items.length > 1 ? 's' : ''}`,
+          el('span', { class: 'sub' }, sub)));
+      for (const p of items) {
+        card.appendChild(el('div', { class: `check ${tone}` },
+          el('span', { class: 'mark' }, mark),
+          el('div', {}, el('div', { class: 'detail' }, String(p)))));
+      }
+      lintBox.appendChild(card);
     }
-    lintBox.appendChild(card);
   }
 
   async function doSave() {
@@ -199,7 +212,7 @@ export async function render(ctx) {
           el('div', { class: 'row tight u-mt-6px' },
             ...r.needs_check.map((n) => el('span', { class: 'chip' }, String(n)))))));
     }
-    renderLint(r.lint);
+    renderLint(r.lint, r.blocking);
     // Counts are not in the import result in the same shape as the bank stats,
     // and re-reading is cheaper than reconciling two shapes.
     try {

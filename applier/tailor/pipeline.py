@@ -112,7 +112,10 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
                  *, variant: str = "default") -> tuple[Path, VerifyReport, Selection]:
     bank = Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
 
-    problems = bank.lint()
+    # Only what would make the page untrue. A bullet that wraps to a second
+    # line is a worse resume, not a false one, and refusing over it left
+    # someone with no resume at all -- which is not the safer failure.
+    problems = bank.blocking_problems()
     if problems:
         raise TailorError(
             "Content bank failed lint; refusing to render:\n  " + "\n  ".join(problems[:6])

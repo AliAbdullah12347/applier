@@ -293,6 +293,7 @@ img.shot { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; }
 .check:last-child { border-bottom: 0; }
 .check .mark { flex: none; width: 16px; font-weight: 700; }
 .check.ok .mark { color: var(--ok); } .check.bad .mark { color: var(--bad); }
+.check.warn .mark { color: var(--warn); }
 .check .detail { color: var(--text-3); font-size: 12px; font-family: var(--mono); word-break: break-all; }
 
 /* --- generated utilities ------------------------------------------------
@@ -301,6 +302,7 @@ img.shot { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; }
    produced from the inline styles the panels used to carry. Regenerate
    rather than hand-edit if the panels change. */
 .u-bordercolor-varbad { border-color: var(--bad); }
+.u-bordercolor-varwarn { border-color: var(--warn); }
 .u-c1-2 { text-align: center; max-width: 52ch; line-height: 1.7; }
 .u-c2-2 { font-size: 16px; font-weight: 600; }
 .u-c3-2 { flex: 1; min-width: 220px; }

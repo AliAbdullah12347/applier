@@ -96,3 +96,31 @@ def test_audit_ignores_benign_lookalikes():
     for text, label in benign:
         assert not re.search(mod.PII_PATTERNS[label], text), (
             f"{label!r} fires on benign text: {text!r}")
+
+
+# --------------------------------------------------------------------------- #
+# run somewhere that is not a checkout
+# --------------------------------------------------------------------------- #
+def test_the_audit_says_so_when_there_is_no_repository(tmp_path):
+    """Every check here asks a question about a git repository.
+
+    Run where there is none and they all answer vacuously, which is what the
+    packaged app did: "scanning 0 file(s)", a PASS over nothing, and seventeen
+    warnings that files "WILL be committed" from a directory that will never
+    be committed to anything. A green pass over zero files is the one result
+    this script must never give.
+    """
+    import subprocess
+    import sys
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    src = Path(__file__).resolve().parent.parent / "scripts" / "audit_privacy.py"
+    (scripts / "audit_privacy.py").write_bytes(src.read_bytes())
+
+    proc = subprocess.run([sys.executable, "-I", str(scripts / "audit_privacy.py")],
+                          capture_output=True, text=True, timeout=120)
+    out = proc.stdout + proc.stderr
+    assert "NOT APPLICABLE" in out, out
+    assert "PASS" not in out, "a pass over zero files is worse than no answer"
+    assert proc.returncode == 0, "not applicable is not a failure"

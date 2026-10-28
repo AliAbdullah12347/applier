@@ -39,6 +39,19 @@ TAG_DENOM_CAP = 8
 LEAD_FOR_BONUS = 0.45
 
 
+# What a lint finding costs. BLOCKING means a rendered resume could be wrong
+# -- a retired number reaching the page, a numeral that never reached the
+# ledger, a bank with nothing in it. ADVISORY means the page is worse but
+# true, and the program renders anyway.
+#
+# They were one category, and `build_resume` refused on any finding at all.
+# Twenty-five long sentences in a master file therefore presented as a system
+# that could not produce a resume: preflight red on two counts, Apply
+# refusing to start, and the remedy on offer was to go and shorten bullets.
+BLOCKING = "blocking"
+ADVISORY = "advisory"
+
+
 class BankError(RuntimeError):
     pass
 
@@ -293,18 +306,31 @@ class Bank:
             return False
 
     # ------------------------------------------------------------------ #
-    def lint(self) -> list[str]:
-        """Structural problems that would let an untrue claim through."""
-        problems: list[str] = []
+    def findings(self) -> list[tuple[str, str]]:
+        """Everything wrong with the bank, each tagged with what it costs.
+
+        Two questions that were one. Everything here is worth fixing, but
+        only some of it makes a rendered resume *wrong*: a retired number
+        that could reach the page, a numeral that never reached the ledger,
+        a bank with nothing in it. A bullet that runs to a second line is
+        untidy.
+
+        Collapsing the two meant one long sentence in the master file
+        stopped the program rendering anything at all -- preflight red on
+        two counts, Apply refusing to start, and twenty-five copies of a
+        message about tightening a phrasing. The style rules are reported
+        just as loudly and block nothing.
+        """
+        problems: list[tuple[str, str]] = []
 
         # An empty bank has nothing to find fault with, so it used to lint
         # clean — the most misleading possible result. "0 problems" on a bank
         # that can render nothing is not a pass.
         if not self.atoms:
-            problems.append(
+            problems.append((BLOCKING,
                 "the bank is empty: no atoms were loaded from "
                 f"{self.dir / 'atoms.yaml'}. Run `bank import` and check it "
-                "reported a non-zero entry count.")
+                "reported a non-zero entry count."))
             return problems
         # An atom in a section no template renders is content that imported
         # cleanly, linted cleanly, and will never reach a page. Reporting it is
@@ -312,12 +338,12 @@ class Bank:
         # believe is on your resume for a month.
         for a in self.atoms:
             if a.section not in RENDERABLE_SECTIONS:
-                problems.append(
+                problems.append((ADVISORY,
                     f"{a.id}: section {a.section!r} is not rendered by any resume "
                     f"template, so this bullet can never appear. Use one of: "
-                    f"{', '.join(sorted(RENDERABLE_SECTIONS))}")
+                    f"{', '.join(sorted(RENDERABLE_SECTIONS))}"))
             if not a.phrasings:
-                problems.append(f"{a.id}: no phrasings")
+                problems.append((ADVISORY, f"{a.id}: no phrasings"))
             # The only remaining source of a two-line bullet. The selector
             # takes the fullest phrasing that fits the column, so an atom
             # whose sentence overruns it and whose stub is too thin to stand
@@ -330,13 +356,13 @@ class Bank:
                          if fits and self._reference_len(a) else 0.0)
                 if not fits or keeps < SHORTEN_KEEPS:
                     width = self._rendered_len(a, "medium")
-                    problems.append(
+                    problems.append((ADVISORY,
                         f"{a.id}: no phrasing fits one line -- the sentence "
                         f"renders {width} characters against a {WRAP_COLUMN}-"
                         f"character column, and the short form keeps only "
                         f"{keeps:.0%} of it. This bullet wraps on every resume "
                         f"it appears on. Tighten the `~` phrasing to "
-                        f"{WRAP_COLUMN} characters or fewer.")
+                        f"{WRAP_COLUMN} characters or fewer."))
             for size, text in a.phrasings.items():
                 stripped = SLOT_RE.sub("", text)
                 for m in BARE_NUMERAL_RE.finditer(stripped):
@@ -371,13 +397,31 @@ class Bank:
                         continue
                     if tail.isalpha():
                         continue        # digits glued to a letter: 3D, C4
-                    problems.append(
-                        f"{a.id}.{size}: bare numeral {tok!r} — move it into claims.yaml")
+                    problems.append((BLOCKING,
+                        f"{a.id}.{size}: bare numeral {tok!r} — move it into claims.yaml"))
                 try:
                     self.resolve(text, strict=True)
                 except BankError as e:
-                    problems.append(f"{a.id}.{size}: {e}")
+                    problems.append((BLOCKING, f"{a.id}.{size}: {e}"))
         return problems
+
+    def lint(self) -> list[str]:
+        """Every finding, worst first. What `bank lint` and the panel show."""
+        order = {BLOCKING: 0, ADVISORY: 1}
+        return [msg for _s, msg in
+                sorted(self.findings(), key=lambda f: order.get(f[0], 9))]
+
+    def blocking_problems(self) -> list[str]:
+        """Only the findings that would make a rendered resume untrue.
+
+        This is what the render gate asks. Nothing about length belongs in
+        the answer: a wrapped bullet is a worse page, not a false one, and
+        refusing to render over it leaves someone with no resume at all.
+        """
+        return [msg for sev, msg in self.findings() if sev == BLOCKING]
+
+    def advisory_problems(self) -> list[str]:
+        return [msg for sev, msg in self.findings() if sev == ADVISORY]
 
     # ------------------------------------------------------------------ #
     @staticmethod

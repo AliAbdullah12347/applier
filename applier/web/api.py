@@ -635,9 +635,13 @@ def get_bank(_body=None, **_kw) -> dict:
                            and str(c.get("status", "")).upper() == "RETIRED"),
         }
         out["lint"] = b.lint()
+        # Split, because the two kinds read very differently on screen: one
+        # means no resume can be produced, the other means a bullet wraps.
+        out["blocking"] = b.blocking_problems()
     except Exception as e:
         out["stats"] = None
         out["lint"] = [f"bank not loadable: {e}"]
+        out["blocking"] = out["lint"]
     return out
 
 
@@ -671,9 +675,12 @@ def import_bank(_body=None, **_kw) -> dict:
     result = dict(stats) if isinstance(stats, dict) else {"result": str(stats)}
     try:
         from ..tailor.bank import Bank
-        result["lint"] = Bank(BANK_DIR).lint()
+        b = Bank(BANK_DIR)
+        result["lint"] = b.lint()
+        result["blocking"] = b.blocking_problems()
     except Exception as e:
         result["lint"] = [str(e)]
+        result["blocking"] = result["lint"]
     return result
 
 
