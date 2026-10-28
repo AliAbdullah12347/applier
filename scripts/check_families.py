@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from applier.config import load_profile, load_settings           # noqa: E402
-from applier.tailor.bank import job_family                        # noqa: E402
+from applier.tailor.bank import WRAP_COLUMN, job_family           # noqa: E402
 from applier.tailor.pipeline import build_resume                  # noqa: E402
 from applier.tailor.render import extract_text, squeezed_words    # noqa: E402
 
@@ -69,6 +69,27 @@ SECTION_NAMES = ("Education", "Technical Skills", "Experience",
                  "Leadership", "Projects")
 
 
+
+
+def _page_fill(pdf: Path) -> float:
+    """Fraction of the printable page the content reaches, 0.0 - 1.0."""
+    try:
+        import pymupdf
+    except ImportError:                                # noqa: BLE001
+        return 0.0
+    try:
+        with pymupdf.open(pdf) as doc:
+            page = doc[0]
+            blocks = [b for b in page.get_text("blocks") if (b[4] or "").strip()]
+            if not blocks:
+                return 0.0
+            top = min(b[1] for b in blocks)
+            bottom = max(b[3] for b in blocks)
+            return (bottom - top) / max(1.0, page.rect.height - 2 * top)
+    except Exception:                                  # noqa: BLE001
+        return 0.0
+
+
 def main() -> int:
     settings, profile = load_settings(), load_profile()
     out = ROOT / "out" / "families"
@@ -77,8 +98,8 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     print(f"{'family':9} {'resolved':9} {'pg':>2} {'ok':>5} {'sq':>3} {'skl':>3} "
-          f"{'blt':>3}  sections")
-    print("-" * 78)
+          f"{'blt':>3} {'wrap':>4} {'fill':>4}  leads with")
+    print("-" * 92)
 
     bad = 0
     for want, title, desc in JOBS:
@@ -108,13 +129,33 @@ def main() -> int:
             n_skills = len(" ".join(buf).split(",")) if buf else 0
 
         order = [ln for ln in lines if ln in SECTION_NAMES]
-        n_bullets = sum(1 for ln in lines if ln.startswith("–"))
+        bullets = [ln for ln in lines if ln.startswith("–")]
+        n_bullets = len(bullets)
+
+        # A bullet past the column width wraps to a second line. Two-line
+        # bullets are the difference between a page that is read and a page
+        # that is skimmed past, so count them rather than eyeballing the PDF.
+        n_wrap = sum(1 for b in bullets if len(b) > WRAP_COLUMN)
+
+        # How much of the page the content actually uses. A resume that stops
+        # two inches short looks unfinished; one that reaches the margin has
+        # spent the space it was given.
+        fill = _page_fill(pdf)
+
+        # What a recruiter's eye lands on first: the heading under the first
+        # section that carries entries. Leading a backend posting with finite
+        # geometry is the specific failure this column exists to catch.
+        lead = ""
+        for idx, ln in enumerate(lines):
+            if ln == "Experience" and idx + 1 < len(lines):
+                lead = lines[idx + 1]
+                break
 
         wrong = (not report.ok or report.pages != 1 or squeezed or fam != want)
         bad += bool(wrong)
         print(f"{want:9} {fam:9} {report.pages:>2} {str(report.ok):>5} "
-              f"{len(squeezed):>3} {n_skills:>3} {n_bullets:>3}  "
-              f"{' > '.join(s[:4] for s in order)}{'  <-- CHECK' if wrong else ''}")
+              f"{len(squeezed):>3} {n_skills:>3} {n_bullets:>3} {n_wrap:>4} "
+              f"{fill:>3.0%}  {lead[:34]}{'  <-- CHECK' if wrong else ''}")
         if report.warnings:
             print(f"{'':9} warnings: {report.warnings[:2]}")
         if squeezed:

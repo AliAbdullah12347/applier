@@ -61,6 +61,26 @@ class Atom:
 # for a skill none of those bullets mentions.
 TAG_VOUCH_MIN_BULLETS = 3
 
+# Characters that fit on one line of the body column, including the bullet
+# glyph and its space. Everything that reasons about how much page a bullet
+# costs goes through this, so the selector and the quality harness cannot
+# drift apart about what "wraps" means.
+#
+# Measured, not guessed. Across 140 rendered bullets the body column takes
+# between 118 and 133 characters depending on the glyph mix, so this sits
+# just under the narrowest real line. It was 105 on the first pass, which
+# cost about an eighth of every bullet to a wrap that was never going to
+# happen. To re-measure after a template or font change, run
+# `scripts/check_families.py` and compare each bullet's rendered width
+# against the right text edge.
+WRAP_COLUMN = 112
+
+# How much of the authored sentence a shorter phrasing has to keep before
+# dropping to it is worth what it loses. At 0.7 a 112-character bullet gives
+# up its second line for an 85-character one, but not for a 30-character
+# stub: the point is to stop bullets wrapping, not to strip the page bare.
+SHORTEN_KEEPS = 0.7
+
 _SKILL_STOPWORDS = {"and", "or", "of", "the", "for", "with", "in", "on", "a"}
 
 
@@ -114,6 +134,7 @@ class Bank:
         self.skills: dict[str, list[str]] = {}
         self.roles: dict[str, dict] = {}
         self.claims: dict[str, dict] = {}
+        self._len_cache: dict[tuple[str, str], int] = {}
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -204,6 +225,25 @@ class Bank:
                     f"{', '.join(sorted(RENDERABLE_SECTIONS))}")
             if not a.phrasings:
                 problems.append(f"{a.id}: no phrasings")
+            # The only remaining source of a two-line bullet. The selector
+            # takes the fullest phrasing that fits the column, so an atom
+            # whose sentence overruns it and whose stub is too thin to stand
+            # in wraps on every resume it reaches. That is an authoring
+            # defect, and it is invisible until you look at a rendered page.
+            elif a.section in RENDERABLE_SECTIONS:
+                fits = [z for z in ("long", "medium", "short")
+                        if self.renderable(a, z) and self._lines(a, z) == 1]
+                keeps = (self._rendered_len(a, fits[0]) / self._reference_len(a)
+                         if fits and self._reference_len(a) else 0.0)
+                if not fits or keeps < SHORTEN_KEEPS:
+                    width = self._rendered_len(a, "medium")
+                    problems.append(
+                        f"{a.id}: no phrasing fits one line -- the sentence "
+                        f"renders {width} characters against a {WRAP_COLUMN}-"
+                        f"character column, and the short form keeps only "
+                        f"{keeps:.0%} of it. This bullet wraps on every resume "
+                        f"it appears on. Tighten the `~` phrasing to "
+                        f"{WRAP_COLUMN} characters or fewer.")
             for size, text in a.phrasings.items():
                 stripped = SLOT_RE.sub("", text)
                 for m in BARE_NUMERAL_RE.finditer(stripped):
@@ -273,21 +313,75 @@ class Bank:
             rel += 0.15
         return rel
 
-    def _best_size(self, atom: Atom, rel: float) -> str:
-        # A pinned atom was pinned because it matters, so it starts at its
-        # fullest form and is only shortened if the page genuinely demands it.
-        # Sizing pins by job relevance is backwards: the whole point of a pin is
-        # that it appears even when the job does not obviously ask for it.
-        if atom.pinned:
-            size = "long"
-        else:
-            size = "long" if rel > 0.8 else ("medium" if rel > 0.35 else "short")
-        while size and not self.renderable(atom, size):
-            size = {"long": "medium", "medium": "short", "short": ""}[size]
-        return size
+    def _reference_len(self, atom: Atom) -> int:
+        """The width of the phrasing this bullet is *meant* to be.
+
+        `medium` is the authoring default -- one sentence, one line -- so it
+        is what "did shortening gut this bullet" is measured against. Using
+        the longest phrasing instead let one bloated `long` drag the ratio
+        and talked the selector out of shortening anything.
+        """
+        for size in ("medium", "long", "short"):
+            if self.renderable(atom, size):
+                return self._rendered_len(atom, size)
+        return 0
+
+    def _best_size(self, atom: Atom) -> str:
+        """Which phrasing to print. A question about lines, not importance.
+
+        Sizing by relevance put the strongest evidence in the longest
+        phrasing, so the better a resume matched the worse it read: a
+        real-time graphics posting came back with thirteen of its sixteen
+        bullets running to two lines, and a recruiter skims a wrapped bullet
+        rather than reading it.
+
+        Below the column width an extra clause is free -- a fifty-character
+        bullet and a hundred-character one both occupy exactly one line -- so
+        the rule is the fullest phrasing that still fits on a line. Relevance
+        decides what reaches the page and in what order; the column decides
+        how it is worded. Those are different questions and were one.
+        """
+        sizes = [s for s in ("long", "medium", "short")
+                 if self.renderable(atom, s)]
+        if not sizes:
+            return ""
+
+        fits = [s for s in sizes if self._lines(atom, s) == 1]
+        if fits and (self._rendered_len(atom, fits[0])
+                     >= self._reference_len(atom) * SHORTEN_KEEPS):
+            return fits[0]
+
+        # Nothing fits without gutting the bullet, so pay the second line:
+        # two lines of evidence beat one line of nothing. `lint` names the
+        # atom, because the real repair is a tighter phrasing in the bank.
+        return "medium" if self.renderable(atom, "medium") else sizes[-1]
+
+    def _rendered_len(self, atom: Atom, size: str) -> int:
+        """Length of what reaches the page, with the claim slots filled in.
+
+        Measuring the template overcharged every bullet that cites a number:
+        `{{C.research_isham.speedup}}` is twenty-nine characters of source
+        that renders as "216x". Bullets were being charged a second line they
+        did not use, which is why pages came out short of the margin while the
+        selector believed the budget was spent.
+        """
+        key = (atom.id, size)
+        hit = self._len_cache.get(key)
+        if hit is None:
+            text, _ = self.resolve(atom.text(size), strict=False)
+            hit = self._len_cache[key] = len(text)
+        return hit
+
+    def _lines(self, atom: Atom, size: str) -> int:
+        # Ceiling, not floor-plus-one: a bullet of exactly WRAP_COLUMN
+        # characters fills one line and starts no second one. The off-by-one
+        # charged every exactly-full bullet a line it did not use, and the
+        # lint called those bullets unfittable when they already fitted.
+        width = self._rendered_len(atom, size)
+        return max(1, -(-width // WRAP_COLUMN))
 
     def _cost(self, atom: Atom, size: str, seen_groups: set[str]) -> int:
-        cost = 1 + (len(atom.text(size)) // 105)
+        cost = self._lines(atom, size)
         if atom.group not in seen_groups:
             cost += 2          # the role heading this bullet renders under
         return cost
@@ -444,7 +538,7 @@ class Bank:
                     return False
                 if per_group.get(atom.group, 0) >= max_per_group:
                     return False
-            size = self._best_size(atom, rel)
+            size = self._best_size(atom)
             if not size:
                 return False
             cost = self._cost(atom, size, seen_groups)
@@ -479,6 +573,26 @@ class Bank:
             if a.pinned:
                 continue
             try_add(a, rel, force=False)
+
+        # Fit order is not reading order. The two phases above decide what
+        # *appears*; a pin means "must appear", not "must appear first", and
+        # letting fit order reach the page led a backend posting with finite
+        # geometry and a graphics posting with a help desk -- in both cases
+        # because that entry happened to carry a pin.
+        #
+        # Entries are ordered by how well the role answers this posting, and
+        # bullets stay in the order they were written within their entry: a
+        # role's bullets are prose, and sorting them scrambles the narrative.
+        best_for_group: dict[tuple[str, str], float] = {}
+        for rel, a in scored:
+            key = (a.section, a.group)
+            if rel > best_for_group.get(key, float("-inf")):
+                best_for_group[key] = rel
+        written = {a.id: i for i, a in enumerate(self.atoms)}
+        chosen.sort(key=lambda pair: (
+            -best_for_group[(pair[0].section, pair[0].group)],
+            written[pair[0].id],
+        ))
 
         gaps = self._gaps(jd_tokens)
         coverage = len(chosen) / max(1, len(self.atoms))
