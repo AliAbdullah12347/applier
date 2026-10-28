@@ -1087,7 +1087,12 @@ WRITABLE = {
     "llm.primary.thinking_budget": int,
     "outreach.enabled": bool,
     "outreach.max_per_week": int,
-    "notify.enabled": bool,
+    "notify.email.enabled": bool,
+    "notify.email.to": str,
+    "notify.email.host": str,
+    "notify.email.port": int,
+    "notify.email.username": str,
+    "notify.email.starttls": bool,
 }
 
 
@@ -1394,6 +1399,29 @@ def put_profile(body, **_kw) -> dict:
     return {"ok": True, "changed": changed}
 
 
+def get_notify(_body=None, **_kw) -> dict:
+    """Whether a submitted application would reach you, and if not, why not."""
+    from .. import notify
+    settings, profile = _cfg()
+    return notify.describe(settings, profile)
+
+
+def post_notify_test(_body=None, **_kw) -> dict:
+    """Send one test email.
+
+    A notifier nobody can test is a notifier nobody can trust, and at the
+    levels that never submit there is no other way to see one work.
+    """
+    from .. import notify
+    settings, profile = _cfg()
+    try:
+        to = notify.send_test(settings, profile)
+    except notify.NotifyError as e:
+        raise ApiError(str(e))
+    get_db().log("notify_test", f"test email to {to}")
+    return {"ok": True, "to": to}
+
+
 def get_secrets(_body=None, **_kw) -> dict:
     """Which keys are set. Never what they are.
 
@@ -1407,7 +1435,8 @@ def get_secrets(_body=None, **_kw) -> dict:
         if isinstance(fb, dict) and fb.get("api_key_env"):
             names.add(fb["api_key_env"])
     for extra in ("GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-                  "GROQ_API_KEY", "OPENROUTER_API_KEY", "IMAP_PASSWORD"):
+                  "GROQ_API_KEY", "OPENROUTER_API_KEY", "IMAP_PASSWORD",
+                  "APPLIER_SMTP_PASSWORD"):
         names.add(extra)
     out = []
     for n in sorted(names):

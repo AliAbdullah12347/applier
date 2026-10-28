@@ -53,6 +53,8 @@ PARITY: dict[str, tuple[str, ...]] = {
     "config-set-key": ("PUT /api/secrets",),
     "config-show":    ("GET /api/settings",),
     "config-models":  ("GET /api/models", "PUT /api/models"),
+    "notify-status":  ("GET /api/notify",),
+    "notify-test":    ("POST /api/notify/test",),
 }
 
 # GUI-only routes, and why the CLI does not need them.
@@ -88,7 +90,7 @@ def _cli_commands() -> set[str]:
     """Every @app.command / @<sub>_app.command in cli.py, by its public name."""
     tree = ast.parse(CLI.read_text(encoding="utf-8"))
     prefixes = {"app": "", "config_app": "config-", "reach_app": "outreach-",
-                "bank_app": "bank-"}
+                "bank_app": "bank-", "notify_app": "notify-"}
     found: set[str] = set()
     for node in tree.body:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

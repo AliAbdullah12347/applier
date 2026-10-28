@@ -47,6 +47,8 @@ reach_app = typer.Typer(help="Referrals and networking. Drafts only -- never sen
 app.add_typer(reach_app, name="outreach")
 bank_app = typer.Typer(help="The master resume and content bank.")
 app.add_typer(bank_app, name="bank")
+notify_app = typer.Typer(help="Email about applications submitted in your name.")
+app.add_typer(notify_app, name="notify")
 con = Console()
 
 
@@ -1099,6 +1101,51 @@ def config_models(
     con.print(f"\n[dim]providers: {', '.join(data['providers'])}[/dim]")
     con.print("[dim]Any vendor with an OpenAI-compatible endpoint works without a "
               "code change: provider 'openai_compatible' plus --base-url.[/dim]")
+
+
+# --------------------------------------------------------------------------- #
+# notify
+# --------------------------------------------------------------------------- #
+@notify_app.command("status")
+def notify_status() -> None:
+    """Would a submitted application reach you, and if not, why not."""
+    from . import notify
+    settings, profile = _load()
+    st = notify.describe(settings, profile)
+
+    con.print(f"email notification: "
+              f"[{'green' if st['ready'] else 'yellow'}]"
+              f"{'ready' if st['ready'] else 'not sending'}[/]")
+    con.print(f"  to          {st['to'] or '[dim]unset[/dim]'}")
+    con.print(f"  server      {st['host'] or '[dim]unset[/dim]'}:{st['port']}"
+              f"  as {st['username'] or '[dim]unset[/dim]'}")
+    con.print(f"  password    {st['password_env']} "
+              f"{'[green]set[/green]' if st['password_set'] else '[yellow]not set[/yellow]'}")
+    if st["reason"]:
+        con.print(f"\n[yellow]{st['reason']}[/yellow]")
+
+    # The configuration can be perfect and still never fire, because the
+    # thing it reports on never happens at the lower levels. Saying so here
+    # is cheaper than waiting a week for an email that was never due.
+    from . import autonomy
+    lvl = autonomy.LEVELS[autonomy.current(settings)]
+    if not lvl.submits:
+        con.print(f"\n[yellow]Nothing will be mailed at this autonomy level: "
+                  f"{lvl.label} never submits.[/yellow] Use `applier notify test` "
+                  f"to check the configuration anyway.")
+
+
+@notify_app.command("test")
+def notify_test() -> None:
+    """Send one test email, so you can see it works before it matters."""
+    from . import notify
+    settings, profile = _load()
+    try:
+        to = notify.send_test(settings, profile)
+    except notify.NotifyError as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    con.print(f"[green]sent[/green] a test email to {to}")
 
 
 def main() -> None:

@@ -503,7 +503,19 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         )
         _ = shots_and_record
 
+        # After the row is written, never before, and nothing it does can
+        # reach back. A mail server that is slow or rejecting a password is a
+        # fact about a mail server; the employer still has the form, and the
+        # one thing that must not follow from a failed email is this run
+        # deciding the application did not happen.
         if submitted:
+            from . import notify
+            db.log("notify", notify.on_submission(
+                settings, profile, job,
+                form_url=target, final_url=final_url,
+                resume=resume_path.name if resume_path else "",
+                resume_sha=_sha256(resume_path) if resume_path else "",
+                fields=len(audit_trail)), job_id=job_id)
             outcome = "Submitted"
         elif audit_trail:
             outcome = f"Filled {len(audit_trail)} field(s), not submitted"

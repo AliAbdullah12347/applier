@@ -265,7 +265,63 @@ async function renderAutonomy(host, ctx) {
       'Changing the level also rewrites apply.mode and the auto-apply score threshold on the Limits tab, '
       + 'because those two are what the level actually means.'));
 
-  host.append(await searchModeCard(ctx), card, note);
+  host.append(await searchModeCard(ctx), card, await notifyCard(ctx), note);
+}
+
+/* Email about a submitted application: the only thing in this program that
+ * sends anything to anyone. It belongs on this tab because it is about what
+ * happens when the system acts without you watching, which is what the dial
+ * above decides. */
+async function notifyCard(ctx) {
+  let n;
+  try { n = await get('/api/notify'); } catch (e) {
+    return el('div', { class: 'card' },
+      el('h2', {}, 'Email when something is submitted'),
+      el('div', { class: 'banner bad' }, e.message));
+  }
+
+  const out = el('div', {});
+  const testBtn = el('button', { class: 'btn' }, 'Send a test email');
+  testBtn.addEventListener('click', async () => {
+    testBtn.disabled = true;
+    clear(out).appendChild(el('div', { class: 'empty' }, 'Connecting to the mail server…'));
+    try {
+      const r = await post('/api/notify/test');
+      clear(out).appendChild(el('div', { class: 'banner ok' },
+        `Sent. Check ${r.to} — if it is not there, look in spam.`));
+    } catch (e) {
+      clear(out).appendChild(el('div', { class: 'banner bad' }, e.message));
+    } finally {
+      testBtn.disabled = false;
+    }
+  });
+
+  const card = el('div', { class: 'card' },
+    el('h2', {}, 'Email when something is submitted',
+      el('span', { class: 'sub' }, 'the only thing here that sends anything to anyone')),
+    el('div', { class: `banner ${n.ready ? 'ok' : 'warn'} u-mb-10px` },
+      n.ready
+        ? `Ready. A submitted application emails ${n.to}.`
+        : (n.reason || 'Not configured.')),
+    checkField('Email me on submission', 'notify.email.enabled', n.enabled,
+      'Outreach still never sends. This is one message to your own address, '
+      + 'about an application this software submitted in your name.'),
+    textField('Send to', 'notify.email.to', n.to,
+      'Leave blank to use identity.email from your profile.'),
+    textField('SMTP host', 'notify.email.host', n.host),
+    numberField('Port', 'notify.email.port', n.port, { min: 1, max: 65535,
+      hint: '587 for STARTTLS, 465 for implicit TLS.' }),
+    textField('Username', 'notify.email.username', n.username,
+      'Leave blank to use the address above.'),
+    el('div', { class: 'dim small u-mb-10px' },
+      'The password lives in the OS keychain under ', el('span', { class: 'mono' }, n.password_env),
+      ', never in a settings file. ',
+      n.password_set ? pill('set', 'ok') : pill('not set', 'warn'),
+      ' Set it on the "Model and keys" tab. Gmail will not accept your account '
+      + 'password here — it needs an App Password.'),
+    el('div', { class: 'row u-mb-10px' }, testBtn),
+    out);
+  return card;
 }
 
 /* -------------------------------------------------------- model and keys -- */

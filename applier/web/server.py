@@ -137,6 +137,8 @@ route("POST", "/api/mode")(api.set_mode)
 route("POST", "/api/autonomy")(api.set_autonomy)
 route("GET", "/api/profile")(api.get_profile)
 route("PUT", "/api/profile")(api.put_profile)
+route("GET", "/api/notify")(api.get_notify)
+route("POST", "/api/notify/test")(api.post_notify_test)
 route("GET", "/api/secrets")(api.get_secrets)
 route("PUT", "/api/secrets")(api.put_secret)
 

@@ -460,8 +460,32 @@ schedule:
 
 notify:
   desktop: true
-  email: false
   on_events: [needs_input, captcha, application_submitted, application_failed, high_stakes_confirm, weekly_digest]
+
+  # The only thing in this program that sends anything to anyone. Outreach
+  # drafts messages and stops; that stays true. This sends one kind of mail,
+  # to one address -- yours -- about one event: an application submitted in
+  # your name while you were not watching.
+  #
+  # It fires at the autonomy levels that actually submit. At "Fully involved"
+  # and "Review each one" nothing is ever sent, so nothing is ever mailed;
+  # `applier notify test` is how you check the configuration works without
+  # waiting for a submission to prove it.
+  #
+  # Gmail will not accept your account password here. It wants an App
+  # Password: Google Account > Security > 2-Step Verification > App
+  # passwords. Whatever the provider, the password itself goes in the OS
+  # keychain and never in this file --
+  #     applier config set-key APPLIER_SMTP_PASSWORD
+  # -- which is why this key names a variable rather than holding a value.
+  email:
+    enabled: false
+    to: ""                       # blank: identity.email from your profile
+    host: "smtp.gmail.com"
+    port: 587                    # 465 is implicit TLS; 587 is STARTTLS
+    username: ""                 # blank: the `to` address
+    password_env: "APPLIER_SMTP_PASSWORD"
+    starttls: true
 
 logging:
   level: "INFO"
