@@ -311,7 +311,8 @@ def fetch_rendered(url: str, *, timeout_ms: int = 20_000) -> str:
         return ""
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            from ..browsers import launch_kwargs
+            browser = pw.chromium.launch(headless=True, **launch_kwargs())
             try:
                 page = browser.new_page(user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

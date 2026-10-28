@@ -73,7 +73,12 @@ class Session:
         try:
             self._ctx = self._pw.chromium.launch_persistent_context(**launch)
         except Exception:
-            launch.pop("channel", None)          # fall back to bundled chromium
+            # Fall back to the downloaded Chromium, naming the executable
+            # explicitly: inside a frozen build the driver computes the wrong
+            # path for it and reports a working install as a missing one.
+            from ..browsers import launch_kwargs
+            launch.pop("channel", None)
+            launch.update(launch_kwargs())
             self._ctx = self._pw.chromium.launch_persistent_context(**launch)
 
         self._ctx.set_default_timeout(45_000)

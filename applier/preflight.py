@@ -208,7 +208,8 @@ def _check_browser(settings: Config) -> Check:
                      blocking=needs, fix="pip install playwright")
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            from .browsers import launch_kwargs
+            browser = pw.chromium.launch(headless=True, **launch_kwargs())
             browser.close()
     except Exception as exc:                            # noqa: BLE001
         detail = str(exc)
@@ -216,6 +217,8 @@ def _check_browser(settings: Config) -> Check:
         if "Executable doesn't exist" in detail or "_MEI" in detail:
             # The packaged build does not carry browsers; they are hundreds of
             # megabytes and are installed once per machine.
+            from .browsers import install_hint
+            hint = install_hint() if "No Chromium" in install_hint() else hint
             hint = ("The browsers are not part of this download. Install them "
                     "once with:  playwright install chromium  (or, with no "
                     "Python on this machine, run the same command from any "

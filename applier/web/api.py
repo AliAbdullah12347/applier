@@ -1412,6 +1412,27 @@ def run_privacy_audit(_body=None, **_kw) -> dict:
     script = resolve_asset("scripts/audit_privacy.py")
     if not script.exists():
         raise ApiError("audit script not found", 500)
+    # In a packaged build sys.executable is applier.exe, not a Python, so
+    # this ran `applier.exe <path to script>` and the CLI answered "No such
+    # command". The script is an ordinary module: run it in this process.
+    if getattr(sys, "frozen", False):
+        import contextlib
+        import io as _io
+        import runpy
+
+        buf = _io.StringIO()
+        code = 0
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                runpy.run_path(str(script), run_name="__main__")
+        except SystemExit as exc:
+            code = int(exc.code or 0)
+        except Exception as exc:                        # noqa: BLE001
+            buf.write(f"\naudit could not run: {exc}")
+            code = 1
+        text = buf.getvalue()
+        return {"ok": code == 0, "output": text, "stdout": text, "stderr": ""}
+
     proc = subprocess.run([sys.executable, str(script)], capture_output=True,
                           text=True, cwd=str(PATHS["root"]), timeout=180)
     return {"ok": proc.returncode == 0,

@@ -256,3 +256,73 @@ def test_the_shipped_settings_name_the_level_explicitly():
     import yaml
     data = yaml.safe_load((ROOT / "config" / "settings.yaml").read_text(encoding="utf-8"))
     assert (data.get("autonomy") or {}).get("level") == "involved"
+
+
+# --------------------------------------------------------------------------- #
+# the browser the bundle cannot find
+# --------------------------------------------------------------------------- #
+def test_the_browser_is_located_by_us_not_by_the_frozen_driver():
+    """Inside a bundle the driver computes a non-Windows path.
+
+    It reported the executable missing at
+    `chromium_headless_shell-1234/chrome-headless-shell` while the file was at
+    `chromium_headless_shell-1234/chrome-headless-shell-win64/chrome-headless-shell.exe`
+    -- no platform subdirectory and no extension. The browser was installed
+    correctly; the driver just could not say where.
+    """
+    from applier.browsers import find_chromium, launch_kwargs
+
+    found = find_chromium()
+    if found is None:
+        import pytest
+        pytest.skip("no browsers installed on this machine")
+    assert found.is_file()
+    assert "executable_path" in launch_kwargs()
+
+
+def test_launch_kwargs_are_empty_when_there_is_no_browser(monkeypatch, tmp_path):
+    """A machine where the driver resolves correctly must be untouched."""
+    from applier import browsers
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nothing"))
+    assert browsers.launch_kwargs() == {}
+
+
+def test_every_launch_site_names_the_executable():
+    """One escaped site is one install reporting a working browser as missing."""
+    for rel, needle in (("applier/preflight.py", "launch_kwargs"),
+                        ("applier/outreach/people.py", "launch_kwargs"),
+                        ("applier/apply/browser.py", "launch_kwargs")):
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        assert needle in src, f"{rel} launches a browser without locating it"
+
+
+# --------------------------------------------------------------------------- #
+# the audit cannot shell out to itself
+# --------------------------------------------------------------------------- #
+def test_the_privacy_audit_does_not_run_the_app_as_an_interpreter():
+    """In a packaged build sys.executable is applier.exe, not a Python.
+
+    `[sys.executable, script]` therefore ran `applier.exe <path>`, and the CLI
+    answered "No such command" -- the audit that gates a push could not run at
+    all from the app.
+    """
+    import inspect
+
+    from applier.web import api
+
+    src = inspect.getsource(api.run_audit) if hasattr(api, "run_audit") else ""
+    if not src:
+        for name in dir(api):
+            fn = getattr(api, name)
+            if callable(fn) and "audit" in name.lower():
+                try:
+                    src = inspect.getsource(fn)
+                except (OSError, TypeError):
+                    continue
+                if "audit_privacy" in src:
+                    break
+    assert "audit_privacy" in src, "could not find the audit handler"
+    assert 'getattr(sys, "frozen"' in src, (
+        "the audit still shells out to sys.executable in a frozen build")
+    assert "runpy" in src
