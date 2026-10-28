@@ -403,8 +403,88 @@ export async function refreshChrome() {
   }
 }
 
+/* ------------------------------------------------------- moving the drawer -- */
+const DRAWER_POS = 'applier.drawer.offset';
+
+/** Keep the drawer on screen: a window resize must not strand it off-edge. */
+function clampDrawer(drawer, dx, dy) {
+  const box = drawer.getBoundingClientRect();
+  const w = box.width || drawer.offsetWidth;
+  const h = box.height || drawer.offsetHeight;
+  // It rests at the bottom-right, so every legal move is up and to the left,
+  // and a margin keeps the grab handle reachable at the extremes.
+  const minX = Math.min(0, -(window.innerWidth - w));
+  const minY = Math.min(0, -(window.innerHeight - h));
+  return [Math.max(minX, Math.min(0, dx)), Math.max(minY, Math.min(0, dy))];
+}
+
+function placeDrawer(drawer, dx, dy) {
+  const [x, y] = clampDrawer(drawer, dx, dy);
+  drawer.style.setProperty('--drawer-dx', `${Math.round(x)}px`);
+  drawer.style.setProperty('--drawer-dy', `${Math.round(y)}px`);
+  drawer.classList.toggle('moved', x !== 0 || y !== 0);
+  return [x, y];
+}
+
+function readDrawerPos() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DRAWER_POS) || 'null');
+    if (raw && Number.isFinite(raw.x) && Number.isFinite(raw.y)) return raw;
+  } catch { /* a cleared or blocked store is not an error worth reporting */ }
+  return { x: 0, y: 0 };
+}
+
+/** Drag by the title bar; double-click it to put the drawer back. */
+function wireDrawerDrag() {
+  const drawer = document.getElementById('drawer');
+  const head = drawer.querySelector('.drawer-head');
+  let at = readDrawerPos();
+  let from = null;
+
+  const apply = () => { const [x, y] = placeDrawer(drawer, at.x, at.y); at = { x, y }; };
+  apply();
+
+  head.addEventListener('pointerdown', (e) => {
+    // Leave the buttons in the title bar alone -- Stop and Close are there.
+    if (e.button !== 0 || e.target.closest('button')) return;
+    from = { px: e.clientX, py: e.clientY, x: at.x, y: at.y };
+    drawer.classList.add('dragging');
+    head.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  head.addEventListener('pointermove', (e) => {
+    if (!from) return;
+    const [x, y] = placeDrawer(drawer, from.x + (e.clientX - from.px),
+                                       from.y + (e.clientY - from.py));
+    at = { x, y };
+  });
+
+  const release = (e) => {
+    if (!from) return;
+    from = null;
+    drawer.classList.remove('dragging');
+    try { head.releasePointerCapture(e.pointerId); } catch { /* already gone */ }
+    try { localStorage.setItem(DRAWER_POS, JSON.stringify(at)); } catch { /* fine */ }
+  };
+  head.addEventListener('pointerup', release);
+  head.addEventListener('pointercancel', release);
+
+  head.addEventListener('dblclick', (e) => {
+    if (e.target.closest('button')) return;
+    at = { x: 0, y: 0 };
+    apply();
+    try { localStorage.removeItem(DRAWER_POS); } catch { /* fine */ }
+  });
+
+  // A window narrower than it was can leave the drawer off-screen with its
+  // handle unreachable, and then there is no way to drag it back.
+  window.addEventListener('resize', apply);
+}
+
 /* ------------------------------------------------------------------- boot -- */
 function wireChrome() {
+  wireDrawerDrag();
   document.getElementById('drawer-close').onclick = () => {
     document.getElementById('drawer').hidden = true;
     liveStream?.close();

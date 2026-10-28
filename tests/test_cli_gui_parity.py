@@ -212,6 +212,54 @@ def test_no_panel_hardcodes_a_raw_href(panel):
         f"{panel}.js sets href directly; use link() so the scheme is checked")
 
 
+# --------------------------------------------------------------------------- #
+# styling the drawer without an inline style attribute
+# --------------------------------------------------------------------------- #
+# The activity drawer can be dragged out of the way, which means its position
+# is written at runtime. The CSP serves `style-src 'self'` with no
+# `unsafe-inline`, so the route matters: a CSSOM property write applies, and a
+# style *attribute* is refused by the browser. Both read the same in a diff
+# and only one of them moves the box.
+STYLE_SINKS = ("setAttribute('style'", 'setAttribute("style"',
+               ".style.cssText", "createElement('style')",
+               'createElement("style")')
+
+
+@pytest.mark.parametrize("name", ["app.js"] + [f"panels/{p}.js" for p in PANELS])
+def test_no_script_sets_a_style_attribute(name):
+    src = (STATIC / name).read_text(encoding="utf-8")
+    for sink in STYLE_SINKS:
+        for line in src.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("*", "//", "/*")):
+                continue
+            assert sink not in line, (
+                f"{name} uses {sink}, which style-src 'self' refuses. Set the "
+                f"property through CSSOM instead: el.style.setProperty(...)")
+
+
+def test_the_markup_carries_no_inline_styles():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'style="' not in html, (
+        "a style attribute in the markup is dead under the CSP; add a class "
+        "to app.css instead")
+    assert "<style" not in html, "a <style> block is refused by style-src 'self'"
+
+
+def test_the_drawer_can_be_moved_and_put_back():
+    """Three pieces, and the box only moves if all three are present."""
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "--drawer-dx" in css and "--drawer-dy" in css, (
+        "the drawer's offsets must be custom properties the stylesheet reads")
+    assert "--drawer-dx" in js, "nothing writes the offset"
+    assert "pointerdown" in js and "pointermove" in js, "no drag handler"
+    assert "dblclick" in js, "no way to put the drawer back where it started"
+    assert "resize" in js, (
+        "a window narrower than it was can strand the drawer off-screen with "
+        "its handle out of reach")
+
+
 def test_the_ui_loads_nothing_from_the_network():
     """No CDN, no web font. The CSP forbids it, and this catches it earlier."""
     for f in [STATIC / "index.html", STATIC / "app.css", STATIC / "app.js"] + \
