@@ -14,6 +14,8 @@ findings that would make the page wrong.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from applier.tailor.bank import ADVISORY, BLOCKING, Bank
@@ -132,3 +134,29 @@ def test_build_resume_does_not_refuse_over_a_long_bullet(tmp_path, monkeypatch):
     with pytest.raises(_PastTheGate):
         pipeline.build_resume({"title": "x", "description": "python"},
                               settings, {}, tmp_path)
+
+
+# --------------------------------------------------------------------------- #
+# "did it actually send?" is a question the table cannot answer alone
+# --------------------------------------------------------------------------- #
+def test_the_applications_list_says_whether_the_mode_can_submit():
+    """A table of rows that all say "ready" reads two ways.
+
+    Either the system tried to send them and could not, or it was never asked
+    to. Those are very different and the status column cannot tell them
+    apart, so the list carries the mode's own answer.
+    """
+    import inspect
+
+    from applier.web import api
+
+    src = inspect.getsource(api.list_applications)
+    assert '"submits"' in src, (
+        "the applications list must say whether this autonomy level submits "
+        "at all; without it a page of 'ready' is unreadable")
+
+    panel = (Path(api.__file__).parent / "static" / "panels"
+             / "applications.js").read_text(encoding="utf-8")
+    assert "data.submits === false" in panel, "nothing reads it"
+    assert "never submits" in panel
+

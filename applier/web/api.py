@@ -422,7 +422,14 @@ def list_applications(_body=None, *, query=None, **_kw) -> dict:
         f"WHERE {' AND '.join(where)} ORDER BY a.id DESC LIMIT 300", tuple(params))
     counts = {r["status"]: r["c"] for r in db.q(
         "SELECT status, COUNT(*) c FROM applications GROUP BY status")}
-    return {"applications": _rows(rs), "counts": counts}
+    # Whether this mode can produce a submitted row at all. Without it the
+    # panel could only show a table of "ready" and leave the reader to work
+    # out whether the system had failed to send them or had never been asked
+    # to -- the two look identical from here, and they are not the same thing.
+    settings, _ = _cfg()
+    lvl = autonomy.LEVELS[autonomy.current(settings)]
+    return {"applications": _rows(rs), "counts": counts,
+            "submits": lvl.submits, "level_label": lvl.label}
 
 
 def get_application(_body=None, *, app_id: int, **_kw) -> dict:

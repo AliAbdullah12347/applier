@@ -107,6 +107,17 @@ async function listView(ctx) {
   const counts = data.counts || {};
   const total  = Object.values(counts).reduce((n, c) => n + (c || 0), 0);
 
+  /* A table of rows that all say "ready" reads two ways: the system tried to
+   * send them and could not, or it was never asked to. Those are not the same
+   * thing and the table cannot tell them apart, so the mode says which. */
+  if (data.submits === false) {
+    ctx.view.appendChild(el('div', { class: 'banner' },
+      el('strong', {}, data.level_label || 'This mode'),
+      ' never submits. Everything here is prepared and waiting for you to '
+      + 'send it yourself — nothing will ever show as submitted at this '
+      + 'level. Raise the level in Settings › Autonomy to change that.'));
+  }
+
   /* The counts come from the whole table, not the filtered query, so the strip
    * keeps showing where everything is even while one status is selected. */
   if (total) {
@@ -130,7 +141,7 @@ async function listView(ctx) {
         el('div', { class: 'u-mt-10px' },
           el('button', { class: 'btn btn-sm', onclick: () => { listStatus = 'all'; ctx.refresh(); } },
             'Show all')))
-      : el('div', { class: 'empty' }, 'Nothing yet. Use Apply to send your first one.'));
+      : el('div', { class: 'empty' }, 'Nothing yet. Use Apply to prepare your first one.'));
     return;
   }
 
