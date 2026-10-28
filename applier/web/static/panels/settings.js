@@ -312,7 +312,11 @@ async function notifyCard(ctx) {
     numberField('Port', 'notify.email.port', n.port, { min: 1, max: 65535,
       hint: '587 for STARTTLS, 465 for implicit TLS.' }),
     textField('Username', 'notify.email.username', n.username,
-      'Leave blank to use the address above.'),
+      'Leave blank to use the address above. These are often different: the '
+      + 'username is the account that owns the mailbox you are sending '
+      + 'through, and it has to match the server. Sending through Gmail with '
+      + 'a username from another domain is rejected even when the password '
+      + 'is right.'),
     el('div', { class: 'dim small u-mb-10px' },
       'The password lives in the OS keychain under ', el('span', { class: 'mono' }, n.password_env),
       ', never in a settings file. ',

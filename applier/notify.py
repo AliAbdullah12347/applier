@@ -166,11 +166,18 @@ def send(cfg: EmailConfig, subject: str, body: str) -> None:
     except smtplib.SMTPAuthenticationError as e:
         # The overwhelmingly likely cause, and the one with a specific fix:
         # Gmail rejects an account password here and wants an App Password.
+        # Two causes, and the message names both because the second is easy
+        # to miss: `username` defaults to the address mail is sent *to*, and
+        # that is routinely a different account from the one the mail is sent
+        # *through*. A Colgate address against smtp.gmail.com is rejected
+        # with the same 535 as a wrong password.
         raise NotifyError(
-            f"{cfg.host} rejected the login for {cfg.username}. If this is "
-            f"Gmail, it needs an App Password (Google Account > Security > "
-            f"2-Step Verification > App passwords), not your normal one. "
-            f"({e.smtp_code})") from e
+            f"{cfg.host} rejected the login for {cfg.username} ({e.smtp_code}). "
+            f"Two usual causes: the password must be an App Password rather "
+            f"than the account password (Google Account > Security > 2-Step "
+            f"Verification > App passwords), and notify.email.username must "
+            f"be the account that owns the mailbox you are sending through, "
+            f"which is often not the address you want the mail sent to.") from e
     except (OSError, smtplib.SMTPException) as e:
         raise NotifyError(f"{cfg.host}:{cfg.port} -- {e}") from e
 
