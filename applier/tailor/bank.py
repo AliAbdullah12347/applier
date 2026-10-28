@@ -287,6 +287,38 @@ class Bank:
         return problems
 
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def tokens(jd_text: str) -> set[str]:
+        """The posting's words, as relevance scoring sees them.
+
+        The dot is in the class so "node.js" and "three.js" survive as one
+        token -- but that also swallows a sentence-ending full stop, so "we
+        use gRPC." tokenised to "grpc." and matched no tag at all. Any
+        technology named at the end of a sentence was invisible to both
+        relevance scoring and gap detection. Strip the dots at the edges and
+        keep the ones inside.
+        """
+        found = {t.strip(".") for t in re.findall(r"[a-z][a-z0-9+#.]{1,}",
+                                                  (jd_text or "").lower())}
+        found.discard("")
+        return found
+
+    def rank(self, jd_text: str, *, family: str = "default") -> list[tuple[float, Atom]]:
+        """Every atom scored against this posting, best first.
+
+        `select` answers "what fits on the page". This answers "what is most
+        relevant", which is the question prose generation needs and could not
+        ask: the cover letter was handed `bank.atoms[:22]`, the first atoms in
+        the file, so a client-service posting got a letter argued from
+        finite-geometry research and the client-service project was never in
+        the model's context at all.
+        """
+        jd = (jd_text or "").lower()
+        jd_tokens = self.tokens(jd)
+        scored = [(self.relevance(a, jd, jd_tokens, family), a) for a in self.atoms]
+        scored.sort(key=lambda p: -p[0])
+        return scored
+
     def relevance(self, atom: Atom, jd: str, jd_tokens: set[str], family: str) -> float:
         hits = sum(1 for t in atom.tags if t.replace("_", " ") in jd or t in jd_tokens)
 
@@ -510,17 +542,8 @@ class Bank:
         `max_per_group` stops one role with twelve bullets from eating the page.
         """
         jd = (jd_text or "").lower()
-        # The dot is in the class so "node.js" and "three.js" survive as one
-        # token — but that also swallows a sentence-ending full stop, so
-        # "we use gRPC." tokenised to "grpc." and matched no tag at all. Any
-        # technology named at the end of a sentence was invisible to both
-        # relevance scoring and gap detection. Strip the dots at the edges and
-        # keep the ones inside.
-        jd_tokens = {t.strip(".") for t in re.findall(r"[a-z][a-z0-9+#.]{1,}", jd)}
-        jd_tokens.discard("")
-
-        scored = [(self.relevance(a, jd, jd_tokens, family), a) for a in self.atoms]
-        scored.sort(key=lambda p: -p[0])
+        jd_tokens = self.tokens(jd)
+        scored = self.rank(jd_text, family=family)
 
         chosen: list[tuple[Atom, str]] = []
         seen_groups: set[str] = set()

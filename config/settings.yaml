@@ -254,6 +254,14 @@ tailor:
     research: "templates/resume/research_cv.tex.j2"   # RISE / Max Planck / ETH / EPFL
     europass: "templates/resume/europass.tex.j2"      # ETH SSRF wants this format
 
+  cover_letter:
+    # Draft, then critique against checkable rules and hand the findings back.
+    # The draft used to ship as written: the audit ran, wrote its findings to a
+    # side file nobody opens, and the letter went out anyway. Each round is one
+    # extra model call, and the loop exits as soon as there is nothing to fix,
+    # so a clean draft still costs exactly one call.
+    revisions: 2
+
   max_pages: 1
   autofit:
     enabled: true
