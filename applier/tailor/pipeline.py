@@ -80,6 +80,34 @@ def _group_selection(sel: Selection, bank: Bank) -> dict[str, list[dict]]:
     return out
 
 
+def document_name(profile: Config, job: dict, kind: str, ext: str) -> str:
+    """"Jane Doe - Example Corp - Software Engineering Intern - Resume.pdf".
+
+    The filename is the first thing a recruiter sees in an ATS attachment
+    list, and "resume.pdf" from four hundred candidates is four hundred files
+    called resume.pdf. Windows-safe, trimmed so the whole path stays well
+    inside the limit, and it falls back to the plain name if anything about
+    the job is missing.
+    """
+    def clean(text: str, limit: int) -> str:
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", text)
+        text = text.strip(" .")
+        text = text[:limit]
+        # Truncation can leave a bracket open -- "... (Summer" reads as a
+        # mistake rather than an abbreviation.
+        if text.count("(") > text.count(")"):
+            text = text[:text.rfind("(")]
+        return text.strip(" .,-")
+
+    who = clean(profile.get("identity.full_name", ""), 40)
+    company = clean(job.get("company", ""), 34)
+    role = clean(job.get("title", ""), 52)
+    parts = [p for p in (who, company, role, kind) if p]
+    name = " - ".join(parts) if who else kind
+    return f"{name}{ext}"
+
+
 def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
                  *, variant: str = "default") -> tuple[Path, VerifyReport, Selection]:
     bank = Bank(data_path(settings.get("tailor.bank_path", "config/bank")))
@@ -123,7 +151,7 @@ def build_resume(job: dict, settings: Config, profile: Config, artifact: Path,
     skills_cap = int(settings.get("tailor.skills.max_items", 26))
     margin = float(settings.get("tailor.autofit.margin_in_floor", 0.45))
 
-    out_pdf = artifact / "resume.pdf"
+    out_pdf = artifact / document_name(profile, job, "Resume", ".pdf")
     last_err = None
 
     for attempt in range(max_compiles):
@@ -313,7 +341,7 @@ def build_cover_letter(job: dict, settings: Config, profile: Config, router,
     header = (f"{ident.get('full_name','')}\n{ident.get('email','')} | {ident.get('phone','')}\n"
               f"{_display(ident.get('github',''))} | {_display(ident.get('website',''))}\n\n")
 
-    path = artifact / "cover_letter.txt"
+    path = artifact / document_name(profile, job, "Cover Letter", ".txt")
     path.write_text(header + body + "\n", encoding="utf-8")
     if flags:
         (artifact / "cover_letter_flags.json").write_text(

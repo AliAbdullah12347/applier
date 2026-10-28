@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -81,7 +81,10 @@ CREATE TABLE IF NOT EXISTS applications (
                    -- | captcha | blocked | abandoned
     failure_reason TEXT,
     resume_path    TEXT,
-    resume_sha256  TEXT,
+    resume_sha256  TEXT,           -- what was actually attached, byte for byte
+    submitted_url  TEXT,           -- the form, so you can go back and look
+    final_url      TEXT,           -- where it landed after submit
+    field_count    INTEGER,
     cover_path     TEXT,
     artifact_dir   TEXT,
     answers_json   TEXT,          -- every field actually submitted
@@ -268,6 +271,15 @@ class Database:
                         conn.execute(f"ALTER TABLE contacts ADD COLUMN {col} TEXT")
                 if "job_id" not in ccols:
                     conn.execute("ALTER TABLE contacts ADD COLUMN job_id INTEGER")
+                # Added in version 5. The first three existed and were never
+                # written to, so the app reported "no hash recorded" against a
+                # file it had just sent, and there was no way to reach the
+                # form afterwards.
+                acols = {r[1] for r in conn.execute("PRAGMA table_info(applications)")}
+                for col, kind in (("submitted_url", "TEXT"), ("final_url", "TEXT"),
+                                  ("field_count", "INTEGER")):
+                    if col not in acols:
+                        conn.execute(f"ALTER TABLE applications ADD COLUMN {col} {kind}")
                 self._ready = True
                 self._pending_merge = bool(prev) and int(prev[0]) < 2
                 self._pending_backfill = True

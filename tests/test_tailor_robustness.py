@@ -479,7 +479,7 @@ def test_no_resume_on_disk_has_words_running_together():
     """Opportunistic: every PDF this machine has produced must still read cleanly."""
     import glob
     from applier.tailor.render import squeezed_words
-    pdfs = glob.glob("applications/**/resume.pdf", recursive=True)
+    pdfs = glob.glob("applications/**/*.pdf", recursive=True)
     if not pdfs:
         pytest.skip("no rendered resumes on this machine")
     newest = max(pdfs, key=lambda p: __import__("os").path.getmtime(p))

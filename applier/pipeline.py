@@ -372,6 +372,12 @@ def _execute_application(job: dict, settings: Config, profile: Config,
 
         for step in range(max_pages):
             sess.settle()
+            # Before and after, so "most of the fields look empty" is a
+            # question you can settle by looking at two pictures rather than
+            # by trusting a JSON blob.
+            before = sess.screenshot(artifact / f"step-{step}-before.png")
+            if before:
+                shots.append(_rel_artifact(before))
             try:
                 res = filler.fill_page(page, job, job_id=job_id)
             except HaltForInput as e:
@@ -420,7 +426,7 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                         })
                         break
 
-            shot = sess.screenshot(artifact / f"step-{step}.png")
+            shot = sess.screenshot(artifact / f"step-{step}-filled.png")
             if shot:
                 shots.append(_rel_artifact(shot))
 
@@ -466,17 +472,36 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         if final_shot:
             shots.append(_rel_artifact(final_shot))
 
+        # Where it ended up. On most boards a successful submit navigates to a
+        # confirmation page, so this is both evidence and somewhere to click.
+        try:
+            final_url = page.url
+        except Exception:                               # noqa: BLE001
+            final_url = ""
+
+        record = _write_submission_record(
+            artifact, job, submitted=submitted, form_url=target,
+            final_url=final_url, audit=audit_trail, shots=shots,
+            resume=resume_path, cover=cover_path)
+        shots_and_record = shots + [_rel_artifact(record)]
+
         # Attach the artifacts. COALESCE and the status guard keep this from
         # walking back the submission recorded at the moment of the click.
         db.run(
             "UPDATE applications SET status=CASE WHEN status='submitted' "
             "  THEN 'submitted' ELSE ? END, "
             "submitted_at=COALESCE(submitted_at, ?), artifact_dir=?, "
-            "answers_json=?, screenshots=?, resume_path=? WHERE job_id=?",
+            "answers_json=?, screenshots=?, resume_path=?, resume_sha256=?, "
+            "cover_path=?, submitted_url=?, final_url=?, field_count=? "
+            "WHERE job_id=?",
             ("submitted" if submitted else "ready", now() if submitted else None,
              _rel_artifact(artifact), json.dumps(audit_trail), json.dumps(shots),
-             str(resume_path) if resume_path else None, job_id),
+             str(resume_path) if resume_path else None,
+             _sha256(resume_path) if resume_path else None,
+             str(cover_path) if cover_path else None,
+             target, final_url, len(audit_trail), job_id),
         )
+        _ = shots_and_record
 
         if submitted:
             outcome = "Submitted"
@@ -642,6 +667,80 @@ def _outreach_for_application(job: dict, settings: Config, profile: Config,
     except Exception as exc:                            # noqa: BLE001
         con.print(f"[dim]outreach unavailable ({exc})[/dim]")
         return 0
+
+
+def _sha256(path: Path) -> str:
+    """The attached file, byte for byte, so there is no doubt which one went."""
+    import hashlib
+
+    h = hashlib.sha256()
+    try:
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
+def _write_submission_record(artifact: Path, job: dict, *, submitted: bool,
+                             form_url: str, final_url: str,
+                             audit: list[dict], shots: list[str],
+                             resume: Path | None, cover: Path | None) -> Path:
+    """One page saying exactly what left this machine.
+
+    The application record used to be a folder of artifacts and a row in a
+    table: a screenshot you had to squint at, a JSON blob of answers, and no
+    link back to the form. "Submitted" was a word you had to take on trust.
+
+    This is the answer to "what did it actually send" -- every question and
+    the answer given, where each answer came from, which files were attached
+    and their checksums, and the URL to go and look.
+    """
+    lines = [
+        f"# {'Submitted' if submitted else 'Prepared, not submitted'}: "
+        f"{job.get('company')} — {job.get('title')}",
+        "",
+        f"- **Form:** {form_url or 'unknown'}",
+    ]
+    if final_url and final_url != form_url:
+        lines.append(f"- **After submitting:** {final_url}")
+    lines.append(f"- **When:** {now()}")
+    lines.append(f"- **Fields answered:** {len(audit)}")
+    lines.append("")
+
+    if resume or cover:
+        lines += ["## Files attached", ""]
+        for label, path in (("Resume", resume), ("Cover letter", cover)):
+            if not path:
+                continue
+            digest = _sha256(path)
+            size = path.stat().st_size if path.exists() else 0
+            lines.append(f"- **{label}:** `{path.name}` — {size:,} bytes"
+                         + (f", sha256 `{digest[:16]}…`" if digest else ""))
+        lines.append("")
+
+    lines += ["## Every answer that was given", ""]
+    if not audit:
+        lines.append("_Nothing was filled. If this says submitted, something is wrong._")
+    else:
+        lines += ["| Question | Answer | Source |", "|---|---|---|"]
+        for row in audit:
+            q = str(row.get("question", "")).replace("|", "\\|")[:90]
+            a = str(row.get("answer", "")).replace("|", "\\|").replace("\n", " ")[:160]
+            src = str(row.get("source", ""))
+            lines.append(f"| {q} | {a} | {src} |")
+    lines.append("")
+
+    if shots:
+        lines += ["## Screenshots", ""]
+        lines += [f"- `{Path(sh).name}`" for sh in shots]
+        lines.append("")
+        lines.append("_Taken full-page, after filling and again after submitting._")
+
+    path = artifact / "SUBMITTED.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 def _record_submission(db: Database, job: dict, settings: Config) -> None:

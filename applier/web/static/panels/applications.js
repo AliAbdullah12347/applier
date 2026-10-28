@@ -263,6 +263,20 @@ async function detailView(ctx, id) {
   kvAdd('Submitted', app.submitted_at
     ? `${fmtDate(app.submitted_at)} · ${fmtAgo(app.submitted_at)}`
     : el('span', { class: 'dim' }, 'not submitted'));
+  /* Where it actually went. "Submitted" was a word you had to take on trust:
+   * there was no record of the form's URL and no way to go back and look. */
+  if (app.submitted_url) {
+    kvAdd('Form', link(app.submitted_url, app.submitted_url, { class: 'small' }));
+  }
+  if (app.final_url && app.final_url !== app.submitted_url) {
+    kvAdd('Landed on', link(app.final_url, app.final_url, { class: 'small' }));
+  }
+  if (typeof app.field_count === 'number') {
+    kvAdd('Fields answered', app.field_count
+      ? `${app.field_count}`
+      : el('span', { class: 'bad' },
+          'none — if this says submitted, something is wrong'));
+  }
   kvAdd('Resume file', app.resume_path
     ? el('span', { class: 'mono small' }, baseName(app.resume_path))
     : el('span', { class: 'dim' }, 'none recorded'));
