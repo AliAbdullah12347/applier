@@ -125,9 +125,16 @@ def restore(archive: Path, *, root: Path | None = None,
 
         # Refuse path traversal. A zip is an untrusted container even when it
         # came from here: "../../.ssh/authorized_keys" is a valid entry name.
+        # Both sides resolved, or the comparison is meaningless. On Windows a
+        # directory can resolve through a junction or an app-container
+        # redirection -- the data directory became
+        # a path under AppData/Local/Packages/.../LocalCache -- so an
+        # unresolved root never prefixes a resolved target and every single
+        # entry read as an escape attempt.
+        safe_root = Path(root).resolve()
         for name in members:
-            target = (root / name).resolve()
-            if not str(target).startswith(str(Path(root).resolve())):
+            target = (safe_root / name).resolve()
+            if not target.is_relative_to(safe_root):
                 raise ValueError(f"archive entry escapes the data directory: {name}")
 
         clashes = [n for n in members if (root / n).exists()]
@@ -139,7 +146,7 @@ def restore(archive: Path, *, root: Path | None = None,
 
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         for name in members:
-            target = root / name
+            target = safe_root / name
             if target.exists():
                 aside = target.with_name(f"{target.name}.replaced-{stamp}")
                 shutil.move(str(target), str(aside))
