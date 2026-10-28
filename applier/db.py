@@ -276,8 +276,15 @@ class Database:
                 # file it had just sent, and there was no way to reach the
                 # form afterwards.
                 acols = {r[1] for r in conn.execute("PRAGMA table_info(applications)")}
+                #
+                # Added in version 6. `status='submitted'` only ever meant
+                # "click() was called on a submit selector" -- not that the
+                # click landed, not that the form validated. These record
+                # what actually corroborates it. See apply/confirm.py.
                 for col, kind in (("submitted_url", "TEXT"), ("final_url", "TEXT"),
-                                  ("field_count", "INTEGER")):
+                                  ("field_count", "INTEGER"),
+                                  ("evidence", "TEXT"), ("evidence_detail", "TEXT"),
+                                  ("acknowledged_at", "TEXT")):
                     if col not in acols:
                         conn.execute(f"ALTER TABLE applications ADD COLUMN {col} {kind}")
                 self._ready = True

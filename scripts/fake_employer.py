@@ -116,6 +116,12 @@ RECEIVED: list[dict] = []
 
 class Handler(BaseHTTPRequestHandler):
     once = False
+    # Serve the failure instead of the thank-you. This is the case the
+    # record could not previously distinguish: the click lands, the form
+    # comes back with a validation summary at the same address, and the
+    # application is written down as submitted. Being able to produce it on
+    # demand is the only way to check that it is read correctly.
+    reject = False
 
     def _send(self, body: str, status: int = 200) -> None:
         payload = body.encode("utf-8")
@@ -168,6 +174,13 @@ class Handler(BaseHTTPRequestHandler):
         print("\n--- application received ---", flush=True)
         print(json.dumps(got, indent=2)[:4000], flush=True)
 
+        if type(self).reject:
+            # What a real board does: the form again, with the complaint on
+            # top, at the URL it was already at.
+            self._send("<h1>There was an error</h1>"
+                       "<p>Phone number is required. Please correct the "
+                       "errors below and resubmit.</p>" + FORM_PAGE, 200)
+            return
         self._send(f"<h1>Thanks</h1><p>Application received for "
                    f"{html.escape(JOB_TITLE)}.</p>")
         if type(self).once:
@@ -182,11 +195,15 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8990)
     ap.add_argument("--once", action="store_true",
                     help="Exit after one submitted application.")
+    ap.add_argument("--reject", action="store_true",
+                    help="Answer every submission with a validation error, "
+                         "so the unconfirmed path can be exercised.")
     ap.add_argument("--dump", type=Path,
                     help="Write what was received to this JSON file.")
     args = ap.parse_args()
 
     Handler.once = args.once
+    Handler.reject = args.reject
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"pretend employer on http://127.0.0.1:{args.port}/job", flush=True)
     print("  apply with:  python -m applier apply "

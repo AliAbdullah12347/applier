@@ -75,6 +75,26 @@ function revokeWhenDetached(root) {
   obs.observe(root.parentNode, { childList: true });
 }
 
+/* How much reason there is to believe an application was actually sent.
+ *
+ * "Submitted" has only ever meant that a submit button was clicked. The
+ * employer's acknowledgement email is the one piece of evidence that does not
+ * come from this program, which is why it sits at the top of the ladder. */
+const EVIDENCE = {
+  click_failed: ['bad', 'click failed',
+    'The submit button could not be clicked. This may not have been sent — open the form and check.'],
+  clicked: ['warn', 'unconfirmed',
+    'The button was clicked and nothing has corroborated it. Run "Check for acknowledgements".'],
+  page_changed: ['ok', 'page confirmed',
+    'The page moved to a confirmation after submitting.'],
+  acknowledged: ['ok', 'employer confirmed',
+    'The employer sent an acknowledgement email. This is the only evidence that does not come from this program.'],
+};
+
+function evidenceOf(a) {
+  return EVIDENCE[a.evidence] || EVIDENCE.clicked;
+}
+
 /* ------------------------------------------------------------------ entry -- */
 export async function render(ctx) {
   revokeBlobs();
@@ -106,6 +126,35 @@ async function listView(ctx) {
   const rows   = data.applications || [];
   const counts = data.counts || {};
   const total  = Object.values(counts).reduce((n, c) => n + (c || 0), 0);
+
+  /* The only check that reaches outside this program for its answer. */
+  if (counts.submitted) {
+    const out = el('span', { class: 'dim small' });
+    const btn = el('button', { class: 'btn btn-sm' }, 'Check for acknowledgements');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      clear(out).appendChild(el('span', {}, 'Reading the mailbox…'));
+      try {
+        const r = await post('/api/acknowledgements');
+        clear(out).appendChild(el('span', {}, r.message || 'done'));
+        if (r.matched) ctx.refresh();
+      } catch (e) {
+        clear(out).appendChild(el('span', { class: 'bad' }, e.message));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    ctx.view.appendChild(el('div', { class: 'card' },
+      el('h2', {}, 'Did they actually arrive?',
+        el('span', { class: 'sub' }, 'the one check that is not this program marking its own work')),
+      el('div', { class: 'dim small u-mb-10px' },
+        '"Submitted" means a submit button was clicked. An employer’s '
+        + 'acknowledgement email is independent of that, so it is the only '
+        + 'thing here that can confirm one. No acknowledgement proves nothing '
+        + '— many boards never send one — so this only ever raises a '
+        + 'row’s evidence, and never lowers it.'),
+      el('div', { class: 'row' }, btn, out)));
+  }
 
   /* A table of rows that all say "ready" reads two ways: the system tried to
    * send them and could not, or it was never asked to. Those are not the same
@@ -156,7 +205,11 @@ async function listView(ctx) {
         a.failure_reason && a.status === 'failed'
           ? el('div', { class: 'dim small mono truncate u-maxw-420px' }, a.failure_reason)
           : null),
-      el('td', { class: 'shrink' }, pill(a.status)),
+      el('td', { class: 'shrink' }, pill(a.status),
+        a.status === 'submitted'
+          ? el('div', { class: 'dim small u-mt-4px', title: evidenceOf(a)[2] },
+              pill(evidenceOf(a)[1], evidenceOf(a)[0]))
+          : null),
       el('td', { class: 'shrink dim small' }, fmtDate(a.started_at)),
       el('td', { class: 'shrink dim small' }, a.submitted_at ? fmtDate(a.submitted_at) : '—'),
       outcomeCell,
@@ -281,6 +334,19 @@ async function detailView(ctx, id) {
   }
   if (app.final_url && app.final_url !== app.submitted_url) {
     kvAdd('Landed on', link(app.final_url, app.final_url, { class: 'small' }));
+  }
+  /* The honest answer to "are you sure it went?". Everything else recorded
+   * here is this program's account of itself. */
+  if (app.status === 'submitted') {
+    const [tone, label, meaning] = evidenceOf(app);
+    kvAdd('Evidence', pill(label, tone), ' ',
+      el('span', { class: 'dim small' }, meaning),
+      app.evidence_detail
+        ? el('div', { class: 'dim small mono u-mt-4px' }, app.evidence_detail)
+        : null);
+    if (app.acknowledged_at) {
+      kvAdd('Acknowledged', `${fmtDate(app.acknowledged_at)} · ${fmtAgo(app.acknowledged_at)}`);
+    }
   }
   if (typeof app.field_count === 'number') {
     kvAdd('Fields answered', app.field_count

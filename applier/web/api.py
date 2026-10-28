@@ -1399,6 +1399,31 @@ def put_profile(body, **_kw) -> dict:
     return {"ok": True, "changed": changed}
 
 
+def check_acknowledgements(_body=None, **_kw) -> dict:
+    """Scan the mailbox for employers acknowledging what we submitted.
+
+    The only evidence about a submission that does not come from this
+    program. Absence proves nothing -- plenty of boards never write -- so
+    this can raise a row's evidence and never lower it.
+    """
+    from ..apply import acknowledge
+
+    settings, profile = _cfg()
+    db = get_db()
+    pending = acknowledge.pending_rows(db)
+    if not pending:
+        return {"ok": True, "checked": 0, "matched": 0,
+                "message": "nothing is waiting on corroboration"}
+    try:
+        acks = acknowledge.scan(settings, profile, pending)
+    except acknowledge.MailboxError as e:
+        raise ApiError(str(e))
+    matched = acknowledge.record(db, acks)
+    db.log("acknowledgements", f"{matched}/{len(pending)} corroborated by mail")
+    return {"ok": True, "checked": len(pending), "matched": matched,
+            "message": f"{matched} of {len(pending)} confirmed by an employer's email"}
+
+
 def get_notify(_body=None, **_kw) -> dict:
     """Whether a submitted application would reach you, and if not, why not."""
     from .. import notify

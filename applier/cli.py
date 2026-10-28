@@ -1148,6 +1148,77 @@ def notify_test() -> None:
     con.print(f"[green]sent[/green] a test email to {to}")
 
 
+# --------------------------------------------------------------------------- #
+# confirm
+# --------------------------------------------------------------------------- #
+@app.command("confirm")
+def confirm_cmd() -> None:
+    """Check your mailbox for employers acknowledging what was submitted.
+
+    Everything else recorded about a submission is this program's account of
+    itself. This is the one piece of evidence that is not.
+    """
+    from .apply import acknowledge
+    from .db import get_db
+
+    settings, profile = _load()
+    db = get_db()
+    pending = acknowledge.pending_rows(db)
+    if not pending:
+        con.print("[green]nothing is waiting on corroboration.[/green]")
+        return
+
+    con.print(f"checking the mailbox for {len(pending)} submitted "
+              f"application(s)\u2026")
+    try:
+        acks = acknowledge.scan(settings, profile, pending)
+    except acknowledge.MailboxError as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    matched = acknowledge.record(db, acks)
+    for ack in acks:
+        con.print(f"  [green]confirmed[/green] job {ack.job_id}: {ack.subject[:70]}")
+    con.print(f"\n{matched} of {len(pending)} now corroborated by an employer.")
+    if matched < len(pending):
+        # Said every time, because the opposite reading is the dangerous one:
+        # treating silence as proof that nothing was sent would have someone
+        # apply to the same job twice by hand.
+        con.print("[dim]No acknowledgement is not evidence of no application. "
+                  "Plenty of boards never send one, and mail lands in spam. "
+                  "Those rows keep the evidence they had.[/dim]")
+
+
+@app.command("evidence")
+def evidence_cmd() -> None:
+    """What actually backs up each application this program says it sent."""
+    from .apply.confirm import LADDER, MEANING
+    from .db import get_db
+
+    _load()
+    db = get_db()
+    rows = db.q("SELECT a.job_id, a.evidence, a.evidence_detail, a.submitted_at, "
+                "j.company, j.title FROM applications a "
+                "JOIN jobs j ON j.id = a.job_id WHERE a.status='submitted' "
+                "ORDER BY a.submitted_at DESC LIMIT 50")
+    if not rows:
+        con.print("[dim]nothing has been submitted yet.[/dim]")
+        return
+
+    colour = {"click_failed": "red", "clicked": "yellow",
+              "page_changed": "cyan", "acknowledged": "green"}
+    for r in rows:
+        level = r["evidence"] or "clicked"
+        con.print(f"[{colour.get(level, 'white')}]{level:14}[/] "
+                  f"{(r['company'] or '')[:24]:24} {(r['title'] or '')[:40]}")
+        if r["evidence_detail"]:
+            con.print(f"               [dim]{r['evidence_detail'][:96]}[/dim]")
+
+    con.print("")
+    for level in LADDER:
+        con.print(f"  [{colour.get(level, 'white')}]{level:14}[/] [dim]{MEANING[level]}[/dim]")
+
+
 def main() -> None:
     try:
         app()

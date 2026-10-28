@@ -53,6 +53,8 @@ PARITY: dict[str, tuple[str, ...]] = {
     "config-set-key": ("PUT /api/secrets",),
     "config-show":    ("GET /api/settings",),
     "config-models":  ("GET /api/models", "PUT /api/models"),
+    "confirm":        ("POST /api/acknowledgements",),
+    "evidence":       ("GET /api/applications",),
     "notify-status":  ("GET /api/notify",),
     "notify-test":    ("POST /api/notify/test",),
 }

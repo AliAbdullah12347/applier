@@ -248,6 +248,7 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                          db: Database, *, console=None) -> str:
     """The shared core. Identical for pasted links and self-found jobs."""
     from .apply.accounts import AccountStore, MailVerifier
+    from .apply import confirm
     from .apply.adapters import for_ats
     from .apply.answers import AnswerBank, HaltForInput
     from .apply.browser import Session, detect_ats
@@ -363,6 +364,9 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         filler = UniversalFiller(bank, router, settings, profile)
         max_pages = int(settings.get("apply.universal_filler.max_pages_per_application", 12))
         submitted = False
+        # Bound here as well as at the click, because the block that
+        # reads it is far from the branch that sets it.
+        clicked = False
         all_filled: dict[str, Any] = {}
         # The selector->value map above is what the browser needed. This is the
         # record a human can audit: question, answer, and where the answer came
@@ -451,7 +455,15 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                             json.dumps(shots), job_id))
                     return ("Form is filled and ready. Review the open browser and click "
                             "submit yourself.")
-                sess.click(selector)
+                # The return value is kept, but it does NOT decide whether
+                # this counts as submitted. `click` returns False whenever
+                # the call raised, and it raises both when the element was
+                # missing and when the page navigated out from under it
+                # mid-click -- which is what a *successful* submit looks
+                # like. Treating False as "not sent" would apply again
+                # tomorrow to a job the employer already has. It is recorded
+                # as evidence instead, which is what it actually is.
+                clicked = sess.click(selector)
                 submitted = True
                 # Written here, not thirty lines further down, because
                 # everything between is housekeeping -- settling the page,
@@ -479,10 +491,24 @@ def _execute_application(job: dict, settings: Config, profile: Config,
         except Exception:                               # noqa: BLE001
             final_url = ""
 
+        # What there is to believe the submit worked, beyond having called
+        # click(). Never raises: this runs after an employer already has the
+        # form, and the block it sits in is the one that writes the audit
+        # trail. See apply/confirm.py for why the status is not conditional
+        # on any of it.
+        evidence, evidence_detail = confirm.CLICKED, ""
+        if submitted:
+            try:
+                evidence, evidence_detail = confirm.read_page(
+                    page, form_url=target, clicked=clicked)
+            except Exception as exc:                    # noqa: BLE001
+                evidence_detail = f"could not read the page: {str(exc)[:120]}"
+
         record = _write_submission_record(
             artifact, job, submitted=submitted, form_url=target,
             final_url=final_url, audit=audit_trail, shots=shots,
-            resume=resume_path, cover=cover_path)
+            resume=resume_path, cover=cover_path,
+            evidence=evidence, evidence_detail=evidence_detail)
         shots_and_record = shots + [_rel_artifact(record)]
 
         # Attach the artifacts. COALESCE and the status guard keep this from
@@ -492,14 +518,17 @@ def _execute_application(job: dict, settings: Config, profile: Config,
             "  THEN 'submitted' ELSE ? END, "
             "submitted_at=COALESCE(submitted_at, ?), artifact_dir=?, "
             "answers_json=?, screenshots=?, resume_path=?, resume_sha256=?, "
-            "cover_path=?, submitted_url=?, final_url=?, field_count=? "
+            "cover_path=?, submitted_url=?, final_url=?, field_count=?, "
+            "evidence=COALESCE(?, evidence), evidence_detail=COALESCE(?, evidence_detail) "
             "WHERE job_id=?",
             ("submitted" if submitted else "ready", now() if submitted else None,
              _rel_artifact(artifact), json.dumps(audit_trail), json.dumps(shots),
              str(resume_path) if resume_path else None,
              _sha256(resume_path) if resume_path else None,
              str(cover_path) if cover_path else None,
-             target, final_url, len(audit_trail), job_id),
+             target, final_url, len(audit_trail),
+             evidence if submitted else None,
+             evidence_detail if submitted else None, job_id),
         )
         _ = shots_and_record
 
@@ -698,7 +727,8 @@ def _sha256(path: Path) -> str:
 def _write_submission_record(artifact: Path, job: dict, *, submitted: bool,
                              form_url: str, final_url: str,
                              audit: list[dict], shots: list[str],
-                             resume: Path | None, cover: Path | None) -> Path:
+                             resume: Path | None, cover: Path | None,
+                             evidence: str = "", evidence_detail: str = "") -> Path:
     """One page saying exactly what left this machine.
 
     The application record used to be a folder of artifacts and a row in a
@@ -719,6 +749,16 @@ def _write_submission_record(artifact: Path, job: dict, *, submitted: bool,
         lines.append(f"- **After submitting:** {final_url}")
     lines.append(f"- **When:** {now()}")
     lines.append(f"- **Fields answered:** {len(audit)}")
+    # The heading above is this program's own word for what it did. This is
+    # how much there is to back it up -- which, on its own, is never much.
+    if submitted and evidence:
+        from .apply.confirm import MEANING
+        lines.append(f"- **Evidence:** `{evidence}` — "
+                     f"{MEANING.get(evidence, '')}"
+                     + (f" ({evidence_detail})" if evidence_detail else ""))
+        lines.append("- _Nothing above is independent of this program. An "
+                     "acknowledgement email from the employer is; run "
+                     "`applier confirm` once one has had time to arrive._")
     lines.append("")
 
     if resume or cover:
