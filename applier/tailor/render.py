@@ -54,6 +54,44 @@ def tex_escape(s: Any) -> str:
     return "".join(out)
 
 
+def tex_url(s: Any) -> str:
+    r"""A URL safe to put inside \href{...}.
+
+    `tex_escape` is wrong here: it turns `~` into `\textasciitilde{}` and `_`
+    into `\_`, and hyperref wants the characters themselves. Only the three
+    that actually end an argument or start a comment need escaping, and a
+    URL carrying a brace or a backslash is not one this program will link.
+    """
+    url = str(s or "").strip()
+    # A brace closes the argument, a backslash starts a command, whitespace
+    # splits it. None of those belong in a link this program renders, and a
+    # URL carrying one is dropped rather than patched into something else.
+    if any(ch in url for ch in "{}\\") or any(ch.isspace() for ch in url):
+        return ""
+    return url.replace("%", r"\%").replace("#", r"\#").replace("&", r"\&")
+
+
+def link_label(url: str, given: str = "") -> str:
+    """What the link says on the page.
+
+    The original resume wrote "GitHub" and "Live Demo" rather than the bare
+    address, which is shorter and reads better on a line that already has a
+    name and a stack on it. An explicit `link_text:` in the master file wins;
+    otherwise the host decides.
+    """
+    if given:
+        return given
+    host = re.sub(r"^https?://(www\.)?", "", str(url or "")).split("/")[0].lower()
+    if "github.com" in host:
+        return "GitHub"
+    if "gitlab.com" in host:
+        return "GitLab"
+    if any(h in host for h in ("vercel.app", "netlify.app", "herokuapp.com",
+                               "pages.dev", "streamlit.app")):
+        return "Live Demo"
+    return host or "Link"
+
+
 @dataclass
 class VerifyReport:
     ok: bool
@@ -77,6 +115,8 @@ class RenderError(RuntimeError):
 def render_tex(template_path: Path, context: dict) -> str:
     env = Environment(loader=FileSystemLoader(str(template_path.parent)), **JINJA_ENV_KW)
     env.filters["tex"] = tex_escape
+    env.filters["texurl"] = tex_url
+    env.globals["link_label"] = link_label
     return env.get_template(template_path.name).render(**context)
 
 

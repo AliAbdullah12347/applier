@@ -475,6 +475,7 @@ def build_bank(master_path: Path, bank_dir: Path, *, write: bool = True) -> dict
                 "stack": e.meta.get("stack", ""),
                 "dates": e.meta.get("dates", ""),
                 "url": e.meta.get("url", ""),
+                "link_text": e.meta.get("link_text", ""),
                 "section": e.section,
             }
         else:
@@ -483,6 +484,12 @@ def build_bank(master_path: Path, bank_dir: Path, *, write: bool = True) -> dict
                 "org": e.meta.get("org", ""),
                 "location": e.meta.get("location", ""),
                 "dates": e.meta.get("dates", ""),
+                # Experience entries carry links too. The original resume
+                # linked "Agents of Influence Website" from a role, and only
+                # projects could hold a url, so that link had nowhere to live
+                # and was dropped from every tailored copy.
+                "url": e.meta.get("url", ""),
+                "link_text": e.meta.get("link_text", ""),
                 "section": e.section,
             }
         if e.pinned:

@@ -66,6 +66,7 @@ def _group_selection(sel: Selection, bank: Bank) -> dict[str, list[dict]]:
                     "stack": meta.get("stack", ""),
                     "dates": meta.get("dates", ""),
                     "url": meta.get("url", ""),
+                    "link_text": meta.get("link_text", ""),
                     "points": points,
                 })
             else:
@@ -74,6 +75,8 @@ def _group_selection(sel: Selection, bank: Bank) -> dict[str, list[dict]]:
                     "org": meta.get("org", ""),
                     "location": meta.get("location", ""),
                     "dates": meta.get("dates", ""),
+                    "url": meta.get("url", ""),
+                    "link_text": meta.get("link_text", ""),
                     "points": points,
                 })
         out[section] = entries

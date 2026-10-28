@@ -121,7 +121,11 @@
 \section{Experience}
 \begin{itemize}[leftmargin=0in,label={}]
 \BLOCK{for role in experience}
-  \entry{\VAR{role.title|tex}}{\VAR{role.dates|tex}}{\VAR{role.org|tex}}{\VAR{role.location|tex}}
+  %% A role can carry a link too: the original resume linked the product
+  %% site from the Alterea entry, and only projects could hold a url, so
+  %% that link had nowhere to live. It rides with the org line, which is
+  %% where it sat there.
+  \entry{\VAR{role.title|tex}}{\VAR{role.dates|tex}}{\BLOCK{if role.url|texurl}\href{\VAR{role.url|texurl}}{\underline{\VAR{role.org|tex}}}\BLOCK{if role.link_text} \textbar{} \href{\VAR{role.url|texurl}}{\underline{\VAR{role.link_text|tex}}}\BLOCK{endif}\BLOCK{else}\VAR{role.org|tex}\BLOCK{endif}}{\VAR{role.location|tex}}
   \bullets
   \BLOCK{for line in role.points}
     \point{\VAR{line|tex}}
@@ -140,7 +144,7 @@
 \section{Leadership}
 \begin{itemize}[leftmargin=0in,label={}]
 \BLOCK{for l in leadership}
-  \entry{\VAR{l.title|tex}}{\VAR{l.dates|tex}}{\VAR{l.org|tex}}{}
+  \entry{\VAR{l.title|tex}}{\VAR{l.dates|tex}}{\BLOCK{if l.url|texurl}\href{\VAR{l.url|texurl}}{\underline{\VAR{l.org|tex}}}\BLOCK{if l.link_text} \textbar{} \href{\VAR{l.url|texurl}}{\underline{\VAR{l.link_text|tex}}}\BLOCK{endif}\BLOCK{else}\VAR{l.org|tex}\BLOCK{endif}}{}
   \bullets
   \BLOCK{for line in l.points}
     \point{\VAR{line|tex}}
@@ -156,7 +160,10 @@
 \section{Projects}
 \begin{itemize}[leftmargin=0in,label={}]
 \BLOCK{for p in projects}
-  \item[]\small{\textbf{\VAR{p.name|tex}}\BLOCK{if p.stack} \textbar{} \textit{\VAR{p.stack|tex}}\BLOCK{endif}}
+  %% The link, if the master file carries one. `texurl` returns empty for a
+  %% URL that cannot safely sit inside \href, so a bad one costs the link
+  %% rather than the compile.
+  \item[]\small{\textbf{\VAR{p.name|tex}}\BLOCK{if p.stack} \textbar{} \textit{\VAR{p.stack|tex}}\BLOCK{endif}\BLOCK{if p.url|texurl} \textbar{} \href{\VAR{p.url|texurl}}{\underline{\VAR{link_label(p.url, p.link_text)|tex}}}\BLOCK{endif}}
   \bullets
   \BLOCK{for line in p.points}
     \point{\VAR{line|tex}}
