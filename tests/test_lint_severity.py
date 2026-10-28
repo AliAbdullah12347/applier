@@ -160,3 +160,24 @@ def test_the_applications_list_says_whether_the_mode_can_submit():
     assert "data.submits === false" in panel, "nothing reads it"
     assert "never submits" in panel
 
+
+
+def test_the_panel_counts_claims_not_the_sections_holding_them():
+    """claims.yaml is two deep: a section per entry, a claim per number.
+
+    Both stats counted the sections. "Numbers tracked" read 21 for 52
+    numbers, and "Retired" looked for a status key on the section, found
+    none, and showed 0 against 8 retired claims. A retired number is one
+    deliberately withdrawn and never to render again -- a panel reporting
+    none of them is denying the one fact it exists to show.
+    """
+    from applier.web.api import _count_claims
+
+    claims = {
+        "role_a": {"speedup": {"value": "216x", "status": "verified"},
+                   "old_metric": {"value": "30%", "status": "RETIRED"}},
+        "role_b": {"users": {"value": "7500", "status": "needs_check"}},
+    }
+    assert _count_claims(claims) == 3
+    assert _count_claims(claims, status="RETIRED") == 1
+    assert _count_claims({}) == 0

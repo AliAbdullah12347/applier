@@ -623,6 +623,16 @@ MASTER = CONFIG_DIR / "bank" / "master_resume.md"
 BANK_DIR = CONFIG_DIR / "bank"
 
 
+def _count_claims(claims: dict, *, status: str | None = None) -> int:
+    """Claims, not the sections holding them. Optionally only one status."""
+    return sum(1 for section in (claims or {}).values()
+               if isinstance(section, dict)
+               for claim in section.values()
+               if isinstance(claim, dict)
+               and (status is None
+                    or str(claim.get("status", "")).upper() == status))
+
+
 def get_bank(_body=None, **_kw) -> dict:
     text = MASTER.read_text(encoding="utf-8") if MASTER.exists() else ""
     if not text and (BANK_DIR / "master_resume.example.md").exists():
@@ -636,10 +646,15 @@ def get_bank(_body=None, **_kw) -> dict:
             "atoms": len(b.atoms),
             "pinned": sum(1 for a in b.atoms if a.pinned),
             "groups": len({a.group for a in b.atoms}),
-            "claims": len(b.claims),
-            "retired": sum(1 for c in b.claims.values()
-                           if isinstance(c, dict)
-                           and str(c.get("status", "")).upper() == "RETIRED"),
+            # claims.yaml is two deep -- a section per entry, a claim per
+            # number -- and both of these counted the sections. "Numbers
+            # tracked" read 21 for 52 numbers, and "Retired" looked for a
+            # status key on the section, found none, and reported 0 against
+            # 8 retired claims. A retired number is one deliberately
+            # withdrawn and never to render again; a panel that says there
+            # are none is denying the one fact it exists to show.
+            "claims": _count_claims(b.claims),
+            "retired": _count_claims(b.claims, status="RETIRED"),
         }
         out["lint"] = b.lint()
         # Split, because the two kinds read very differently on screen: one
