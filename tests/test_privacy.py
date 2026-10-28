@@ -22,6 +22,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 AUDIT = ROOT / "scripts" / "audit_privacy.py"
 
@@ -124,3 +126,69 @@ def test_the_audit_says_so_when_there_is_no_repository(tmp_path):
     assert "NOT APPLICABLE" in out, out
     assert "PASS" not in out, "a pass over zero files is worse than no answer"
     assert proc.returncode == 0, "not applicable is not a failure"
+
+
+def test_restore_refuses_to_put_the_example_bank_over_a_real_one(tmp_path):
+    """The accident that cost a real content bank five times in six minutes.
+
+    A fresh packaged install seeds the four-bullet example; "Back up now" on
+    that install writes an archive of the example; restoring it later over a
+    real install silently swaps ninety bullets for four. Nothing complained,
+    because every file involved was valid.
+    """
+    import zipfile
+
+    from applier.backup import restore, would_replace_real_bank_with_example
+    from applier.config import resolve_asset
+
+    example = resolve_asset("config/bank/atoms.example.yaml").read_bytes()
+
+    root = tmp_path / "install"
+    (root / "config" / "bank").mkdir(parents=True)
+    (root / "config" / "bank" / "atoms.yaml").write_bytes(
+        b"atoms:\n" + b"  - {id: a, phrasings: {medium: real}}\n" * 90)
+
+    archive = tmp_path / "example-backup.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("config/bank/atoms.yaml", example)
+
+    assert would_replace_real_bank_with_example(archive, root)
+    with pytest.raises(ValueError, match="four-bullet example"):
+        restore(archive, root=root, overwrite=True)
+
+    # Refusing is a default, not a veto: it is still his install.
+    restore(archive, root=root, overwrite=True, allow_example=True)
+    assert (root / "config" / "bank" / "atoms.yaml").read_bytes() == example
+
+
+def test_restore_is_silent_when_there_is_nothing_to_lose(tmp_path):
+    """Replacing an example with an example is not worth a refusal."""
+    import zipfile
+
+    from applier.backup import would_replace_real_bank_with_example
+    from applier.config import resolve_asset
+
+    example = resolve_asset("config/bank/atoms.example.yaml").read_bytes()
+    root = tmp_path / "fresh"
+    (root / "config" / "bank").mkdir(parents=True)
+    (root / "config" / "bank" / "atoms.yaml").write_bytes(example)
+
+    archive = tmp_path / "b.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("config/bank/atoms.yaml", example)
+    assert would_replace_real_bank_with_example(archive, root) == ""
+
+
+def test_a_real_archive_restores_without_complaint(tmp_path):
+    import zipfile
+
+    from applier.backup import would_replace_real_bank_with_example
+
+    root = tmp_path / "install"
+    (root / "config" / "bank").mkdir(parents=True)
+    (root / "config" / "bank" / "atoms.yaml").write_bytes(b"atoms: [real]")
+
+    archive = tmp_path / "real.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("config/bank/atoms.yaml", b"atoms: [also real, and bigger]")
+    assert would_replace_real_bank_with_example(archive, root) == ""

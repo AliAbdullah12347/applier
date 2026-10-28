@@ -109,8 +109,54 @@ def inspect(archive: Path) -> dict:
     return meta
 
 
+def _is_example(data: bytes) -> bool:
+    """Is this byte-for-byte the content bank this program ships with?"""
+    from .config import resolve_asset
+
+    try:
+        return data == resolve_asset("config/bank/atoms.example.yaml").read_bytes()
+    except OSError:
+        return False
+
+
+def would_replace_real_bank_with_example(archive: Path, root: Path) -> str:
+    """Why this restore would be a mistake, or "" if it would not.
+
+    The accident this exists for: a fresh packaged install seeds the
+    four-bullet example, "Back up now" on that install writes an archive of
+    the example, and restoring it later over a real install silently swaps
+    ninety bullets for four. Nothing complained, because every file involved
+    was valid. It happened five times in six minutes, which is what someone
+    does when the result is not what they expected and they cannot see why.
+
+    Checked byte-for-byte against the shipped file -- the same question
+    preflight asks about the installed bank -- so a bank that merely happens
+    to be small is not refused.
+    """
+    live = Path(root) / "config" / "bank" / "atoms.yaml"
+    if not live.is_file():
+        return ""
+    try:
+        if _is_example(live.read_bytes()):
+            return ""                  # replacing an example: nothing to lose
+    except OSError:
+        return ""
+
+    with zipfile.ZipFile(archive) as zf:
+        name = next((n for n in zf.namelist()
+                     if n.endswith("config/bank/atoms.yaml")), "")
+        if not name or not _is_example(zf.read(name)):
+            return ""
+
+    return ("this archive holds the four-bullet example content bank, and the "
+            "install has a real one. Restoring it would mean every "
+            "application carries a sample resume. If that is genuinely what "
+            "you want, say so explicitly.")
+
+
 def restore(archive: Path, *, root: Path | None = None,
-            overwrite: bool = False) -> list[str]:
+            overwrite: bool = False,
+            allow_example: bool = False) -> list[str]:
     """Unpack an archive over the data directory. Returns what was written.
 
     Refuses to overwrite by default. A restore that silently replaces a
@@ -119,6 +165,10 @@ def restore(archive: Path, *, root: Path | None = None,
     rather than deleted even when overwrite is asked for.
     """
     root = root or ROOT
+    if not allow_example:
+        why = would_replace_real_bank_with_example(archive, root)
+        if why:
+            raise ValueError(why)
     written: list[str] = []
     with zipfile.ZipFile(archive) as zf:
         members = [n for n in zf.namelist() if n != MANIFEST]

@@ -1023,11 +1023,19 @@ async function renderMaintenance(host) {
     clear(out).appendChild(el('div', { class: 'empty' }, 'Scanning the repository…'));
     try {
       const r = await post('/api/audit');
+      /* Three outcomes, not two. Exit zero covers both "scanned everything
+       * and found nothing" and "there was nothing here to scan", and reading
+       * the second as the first put "Clean — nothing personal was found"
+       * above output that said the check did not apply. A pass over zero
+       * files is the one claim this panel must not make. */
+      const na = (r.output || '').includes('NOT APPLICABLE');
       clear(out).append(
-        el('div', { class: `banner ${r.ok ? 'ok' : 'bad'}` },
-          el('span', {}, r.ok
-            ? 'Clean — nothing personal was found in anything that would be pushed.'
-            : 'Findings below. Clear them before pushing; the same check runs there and will refuse.')),
+        el('div', { class: `banner ${na ? 'warn' : (r.ok ? 'ok' : 'bad')}` },
+          el('span', {}, na
+            ? 'Not applicable here — this install is not a source checkout, so there is nothing to push and nothing was scanned.'
+            : (r.ok
+              ? 'Clean — nothing personal was found in anything that would be pushed.'
+              : 'Findings below. Clear them before pushing; the same check runs there and will refuse.'))),
         el('pre', { class: 'log u-c5-2' }, r.output || '(no output)'));
     } catch (e) {
       clear(out).appendChild(el('div', { class: 'banner bad' }, e.message));

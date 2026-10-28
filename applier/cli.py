@@ -408,6 +408,9 @@ def backup(
     to: Path = typer.Option(None, "--to", help="Where to write it. Defaults to out/."),
     restore_from: Path = typer.Option(None, "--restore", help="Unpack an archive instead."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace existing files on restore."),
+    allow_example: bool = typer.Option(
+        False, "--allow-example",
+        help="Permit a restore that puts the shipped example bank over a real one."),
 ) -> None:
     """Copy out the three things here that cannot be rebuilt.
 
@@ -428,7 +431,8 @@ def backup(
         con.print(f"[dim]{meta.get('entries', '?')} entries, written "
                   f"{meta.get('created', 'unknown')}[/dim]")
         try:
-            written = do_restore(restore_from, overwrite=overwrite)
+            written = do_restore(restore_from, overwrite=overwrite,
+                                 allow_example=allow_example)
         except FileExistsError as e:
             con.print(f"[yellow]{e}[/yellow]")
             raise typer.Exit(1)

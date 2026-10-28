@@ -825,7 +825,11 @@ def restore_backup(body=None, **_kw) -> dict:
         raise ApiError(f"not a readable archive: {exc}")
 
     try:
-        written = restore(archive, overwrite=bool((body or {}).get("overwrite")))
+        written = restore(
+            archive, overwrite=bool((body or {}).get("overwrite")),
+            # Opt in, never inferred. The refusal names what it is refusing
+            # and the panel shows it, so the next click is a decision.
+            allow_example=bool((body or {}).get("allow_example")))
     except FileExistsError as exc:
         raise ApiError(str(exc))
     except ValueError as exc:
