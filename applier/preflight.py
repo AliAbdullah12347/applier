@@ -295,8 +295,21 @@ def run_preflight(settings: Config, profile: Config, *, deep: bool = True) -> Re
     report.checks.append(_safe(lambda: _check_autonomy(settings), "autonomy", False))
     report.checks.append(_safe(lambda: _check_caps(settings), "employer caps", False))
     if deep:
-        report.checks.append(
-            _safe(lambda: _check_renderer(settings, profile), "resume rendering", True))
+        # Rendering from the example bank fails for having almost no text,
+        # which is true and useless: it reports the same problem the bank
+        # check just reported, in terms that sound like a broken renderer.
+        # One cause, one message.
+        bank_is_example = any(
+            c.name == "content bank" and not c.ok and "example" in c.detail
+            for c in report.checks)
+        if bank_is_example:
+            report.checks.append(Check(
+                "resume rendering", True,
+                "not checked — there is nothing real in the bank to render yet"))
+        else:
+            report.checks.append(
+                _safe(lambda: _check_renderer(settings, profile),
+                      "resume rendering", True))
         report.checks.append(
             _safe(lambda: _check_model(settings, profile), "language model", True))
         report.checks.append(_safe(lambda: _check_browser(settings), "browser", False))

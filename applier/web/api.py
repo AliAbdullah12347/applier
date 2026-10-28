@@ -770,6 +770,47 @@ def list_contacts(_body=None, **_kw) -> dict:
             "pending": sum(1 for c in contacts if c["stage"] == "harvested")}
 
 
+def restore_backup(body=None, **_kw) -> dict:
+    """Unpack an archive over this install's data directory.
+
+    The way an existing install comes across to a packaged one: the content
+    bank, the profile and the record of what has been applied to. Without it
+    a fresh install is seeded with the four-bullet example and every
+    application would carry a sample resume.
+
+    Existing files are moved aside rather than replaced outright, so a
+    restore onto the wrong install is recoverable.
+    """
+    from ..backup import inspect as inspect_archive, restore
+
+    path = str((body or {}).get("path") or "").strip().strip('"')
+    if not path:
+        raise ApiError("give the path to a .zip written by `applier backup`")
+    archive = Path(path).expanduser()
+    if not archive.is_file():
+        raise ApiError(f"no file at {archive}")
+
+    try:
+        meta = inspect_archive(archive)
+    except Exception as exc:                            # noqa: BLE001
+        raise ApiError(f"not a readable archive: {exc}")
+
+    try:
+        written = restore(archive, overwrite=bool((body or {}).get("overwrite")))
+    except FileExistsError as exc:
+        raise ApiError(str(exc))
+    except ValueError as exc:
+        raise ApiError(str(exc))
+
+    # Everything downstream reads cached config; a restore that leaves the
+    # old profile in memory looks like it did nothing.
+    load_settings(reload=True)
+    load_profile(reload=True)
+    return {"ok": True, "files": len(written),
+            "has_bank": meta.get("has_bank"), "has_profile": meta.get("has_profile"),
+            "created": meta.get("created")}
+
+
 def make_backup(body=None, **_kw) -> dict:
     """Write an archive of the irreplaceable files. Never contains a key."""
     from ..backup import create

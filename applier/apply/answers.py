@@ -123,6 +123,31 @@ QUESTION_TAXONOMY: list[tuple[str, list[str], bool]] = [
     ("resume_upload", [r"resume", r"cv upload", r"attach.*resume"], False),
     ("cover_letter_upload", [r"cover letter"], False),
 
+    # Compliance. Every one of these resolved to None before, which on a
+    # required field means a blank submission and on a criminal-history
+    # question means a model was about to attest to something on Ali's
+    # behalf. They are marked legal so they are answered exactly as stored
+    # and never rewritten.
+    ("age_18", [r"(are you|confirm).{0,24}\b18\b", r"18 years of age",
+                r"at least 18", r"of legal working age"], True),
+    ("criminal_history", [r"convicted", r"criminal (record|history|conviction)",
+                          r"felony", r"misdemean"], True),
+    ("background_check", [r"background (check|screen|investigation)",
+                          r"consent to a background"], True),
+    ("drug_test", [r"drug (test|screen)", r"substance (test|screen)"], True),
+    ("work_eligibility_proof", [r"proof of (your )?(eligibility|authorization|identity)",
+                                r"documentation .{0,20}(eligibility|authorization)",
+                                r"i-?9\b", r"verify your (right|eligibility) to work"], True),
+    ("notice_period", [r"notice period", r"how much notice",
+                       r"when (could|can) you (start|begin)\b.{0,20}notice"], False),
+    ("currently_employed", [r"currently employed", r"present employer",
+                            r"are you employed"], False),
+    ("non_compete", [r"non[\s-]?compete", r"restrictive covenant",
+                     r"any agreement .{0,30}(restrict|prevent)"], True),
+    ("drivers_license", [r"driver'?s? licen[cs]e", r"valid licen[cs]e to drive"], False),
+    ("reliable_transport", [r"reliable transport", r"own transport",
+                            r"reliable (means of )?transportation",
+                            r"able to commute"], False),
 ]
 
 LEGAL_IDS = {qid for qid, _, legal in QUESTION_TAXONOMY if legal}
@@ -192,6 +217,23 @@ class HaltForInput(Exception):
         self.reason = reason
 
 
+# Question id -> the profile key under `compliance`. These are answers Ali has
+# given about himself: an age, a criminal record, a consent. None of them is
+# inferable from a resume, so an unset one halts and asks once rather than
+# being handed to a model or left blank on a required field.
+COMPLIANCE_FIELDS: dict[str, str] = {
+    "age_18": "age_18_or_over",
+    "criminal_history": "convicted_of_crime",
+    "background_check": "background_check_consent",
+    "drug_test": "drug_test_consent",
+    "work_eligibility_proof": "can_provide_work_eligibility_proof",
+    "non_compete": "non_compete",
+    "notice_period": "notice_period",
+    "currently_employed": "currently_employed",
+    "drivers_license": "drivers_license",
+    "reliable_transport": "reliable_transport",
+}
+
 class AnswerBank:
     def __init__(self, db: Database, profile: Config, settings: Config) -> None:
         self.db = db
@@ -216,6 +258,17 @@ class AnswerBank:
                 "Immigration/identity question not recognised by the taxonomy — "
                 "refusing to guess or send it to a model",
             )
+
+        # A compliance question with no stored answer must not reach a model.
+        # "Do you have a driver's licence" has exactly one true answer and it
+        # is not in a resume.
+        if qid in COMPLIANCE_FIELDS:
+            value = self.p.get(f"compliance.{COMPLIANCE_FIELDS[qid]}", None)
+            if value is None or str(value).strip().upper() in ("", "ASK"):
+                raise HaltForInput(
+                    question,
+                    f"compliance.{COMPLIANCE_FIELDS[qid]} is not set — answer "
+                    f"it once with `applier asks` and it is remembered.")
 
         stored = self._stored(question)
         if stored:
@@ -315,6 +368,22 @@ class AnswerBank:
             edu = (self.p.get("education", []) or [{}])[0]
             return Resolution(edu.get("degree"), "profile_legal", 1.0, qid)
 
+        # Compliance answers come from the profile verbatim. A missing one
+        # halts rather than guessing: an unanswered attestation is a question
+        # for Ali, not an opportunity to infer.
+        if qid in COMPLIANCE_FIELDS:
+            value = self.p.get(f"compliance.{COMPLIANCE_FIELDS[qid]}", None)
+            if value is None or str(value).strip().upper() in ("", "ASK"):
+                raise HaltForInput(
+                    question,
+                    f"compliance.{COMPLIANCE_FIELDS[qid]} is not set. These go onto "
+                    f"forms as attestations, so it has to be your answer.")
+            detail = ""
+            if qid == "criminal_history":
+                detail = str(self.p.get("compliance.convicted_of_crime_detail", "") or "")
+            return Resolution(value, "profile_legal", 1.0, qid,
+                              needs_qualifier=bool(detail), qualifier_text=detail)
+
         raise HaltForInput(question, f"Legal field '{qid}' has no resolver")
 
     # ------------------------------------------------------------------ #
@@ -344,7 +413,15 @@ class AnswerBank:
         comp = p.get("compensation", {})
         demo = p.get("demographics", {})
 
+        # Not legal attestations, but still answers Ali has given rather than
+        # anything a model should invent. They matched a question id and then
+        # fell through to "unresolved", which leaves a required field empty.
+        comply = p.get("compliance", {}) or {}
         simple: dict[str, Any] = {
+            "notice_period": comply.get("notice_period"),
+            "currently_employed": comply.get("currently_employed"),
+            "drivers_license": comply.get("drivers_license"),
+            "reliable_transport": comply.get("reliable_transport"),
             "first_name": ident.get("first_name"),
             "last_name": ident.get("last_name"),
             "full_name": ident.get("full_name"),

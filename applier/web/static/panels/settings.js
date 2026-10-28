@@ -893,7 +893,38 @@ function backupCard() {
     button.disabled = false;
   });
 
+  /* Restoring is how an existing install comes across to this one. Without
+   * it a fresh copy keeps the four-bullet example bank and every application
+   * carries a sample resume. */
+  const restorePath = el('input', {
+    type: 'text', class: 'inp',
+    placeholder: 'Path to a .zip written by Back up now' });
+  const restoreOut = el('div', {});
+  const restoreBtn = el('button', { class: 'btn' }, 'Restore');
+  restoreBtn.addEventListener('click', async () => {
+    const path = restorePath.value.trim();
+    if (!path) { toast('Paste the path to a backup .zip first.', 'bad'); return; }
+    restoreBtn.disabled = true;
+    clear(restoreOut);
+    try {
+      const r = await post('/api/restore', { path, overwrite: true });
+      restoreOut.appendChild(el('div', { class: 'banner ok' },
+        `Restored ${r.files} file(s)`
+        + (r.has_bank ? ', including your content bank' : '')
+        + '. Reload to see it.'));
+    } catch (e) {
+      restoreOut.appendChild(el('div', { class: 'banner bad' }, e.message));
+    }
+    restoreBtn.disabled = false;
+  });
+
   card.append(el('div', { class: 'row' }, button), out,
+    el('h3', { class: 'u-mt-16px u-mb-8px' }, 'Restore'),
+    el('div', { class: 'row' }, el('div', { class: 'u-c3-2' }, restorePath), restoreBtn),
+    restoreOut,
+    el('p', { class: 'muted small u-mt-8px' },
+      'Restoring replaces files in this install; the versions being replaced '
+      + 'are moved aside, not deleted.'),
     el('p', { class: 'muted small u-mt-8px' },
       'Your profile, your content bank, and the record of what you have '
       + 'applied to. Artifacts are left out — they regenerate from the bank. '

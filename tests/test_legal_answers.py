@@ -219,3 +219,80 @@ def test_the_wider_pattern_does_not_swallow_other_questions(label):
     grad = [p for qid, p, _legal in patterns if qid == "graduation_date"][0]
     assert not any(re.search(p, label, re.I) for p in grad), (
         f"{label!r} would be answered with a graduation date")
+
+
+# --------------------------------------------------------------------------- #
+# compliance questions
+# --------------------------------------------------------------------------- #
+# Every one of these resolved to None: a required field left blank, or -- for
+# the criminal-history question -- a model about to attest to something on a
+# real person's behalf. They are answered from the profile verbatim now, and
+# an unset one halts rather than guessing.
+def test_every_compliance_question_maps_to_a_profile_field():
+    from applier.apply.answers import COMPLIANCE_FIELDS
+    assert COMPLIANCE_FIELDS, "the compliance mapping is gone"
+    for qid, field in COMPLIANCE_FIELDS.items():
+        assert field and isinstance(field, str), f"{qid} maps to nothing"
+
+
+@pytest.mark.parametrize("question,qid", [
+    ("Are you 18 years of age or older?", "age_18"),
+    ("Have you ever been convicted of a felony?", "criminal_history"),
+    ("Have you ever been convicted of a crime?", "criminal_history"),
+    ("Will you consent to a background check?", "background_check"),
+    ("Will you consent to a drug screen?", "drug_test"),
+    ("Are you able to provide proof of your eligibility to work?",
+     "work_eligibility_proof"),
+    # The hyphen is normalised away before matching, so a pattern that
+    # required it matched nothing at all.
+    ("Are you subject to any non-compete agreement?", "non_compete"),
+    ("Are you subject to any non compete agreement?", "non_compete"),
+    ("What is your notice period?", "notice_period"),
+    ("Are you currently employed?", "currently_employed"),
+    ("Do you have a valid driver license?", "drivers_license"),
+])
+def test_a_compliance_question_is_recognised(question, qid):
+    from applier.apply.answers import classify
+    got, _legal = classify(question)
+    assert got == qid, f"{question!r} classified as {got!r}"
+
+
+@pytest.mark.parametrize("qid", [
+    "age_18", "criminal_history", "background_check", "drug_test",
+    "work_eligibility_proof", "non_compete",
+])
+def test_the_attestations_are_marked_legal(qid):
+    """Legal answers are used exactly as stored and never rewritten."""
+    import applier.apply.answers as answers
+
+    patterns = None
+    for name in dir(answers):
+        value = getattr(answers, name)
+        if (isinstance(value, (list, tuple)) and value
+                and isinstance(value[0], tuple) and len(value[0]) == 3):
+            patterns = value
+            break
+    legal = {q: lg for q, _p, lg in patterns}
+    assert legal.get(qid) is True, f"{qid} is not treated as a legal answer"
+
+
+def test_an_unset_compliance_answer_halts_rather_than_guessing(tmp_path):
+    """A model must never attest on someone's behalf."""
+    from applier.apply.answers import AnswerBank, HaltForInput
+    from applier.config import Config
+    from applier.db import Database
+
+    bank = AnswerBank(Database(tmp_path / "t.db"),
+                      Config({"compliance": {"criminal_history": "ASK"}}),
+                      Config({}))
+    with pytest.raises(HaltForInput):
+        bank.resolve("Have you ever been convicted of a felony?")
+
+
+def test_a_criminal_history_detail_travels_with_the_answer():
+    """Forms that ask for an explanation get the stored one, not a generated one."""
+    import inspect
+
+    import applier.apply.answers as answers
+    src = inspect.getsource(answers.AnswerBank._resolve_legal)
+    assert "convicted_of_crime_detail" in src
