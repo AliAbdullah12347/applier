@@ -1028,6 +1028,43 @@ def config_show() -> None:
     con.print(_y.safe_dump(redact(settings.raw), sort_keys=False, allow_unicode=True))
 
 
+def _probe_chain(*, apply: bool) -> None:
+    """Call every link once and say what it does; optionally reorder.
+
+    The order of a chain is only right until a quota moves, and nothing on
+    screen shows a link failing -- the chain reports whichever model
+    eventually answered, never the ones that burned a minute first.
+    """
+    from .config import patch_settings
+    from .llm.probe import as_chain, probe_chain, suggest_order, would_change
+
+    settings, _ = _load()
+    con.print("[dim]calling every link once; a few seconds per model[/dim]\n")
+    results = probe_chain(settings)
+
+    tone = {"ok": "green", "rate_limited": "yellow", "unavailable": "yellow",
+            "no_key": "yellow", "timeout": "red", "error": "red"}
+    con.print(f"{'role':9} {'model':28} {'state':13} {'secs':>6}")
+    for r in results:
+        con.print(f"{r.role:9} {r.model:28} "
+                  f"[{tone.get(r.state, 'white')}]{r.state:13}[/] {r.seconds:>6.1f}"
+                  + (f"  [dim]{r.detail[:40]}[/dim]" if r.detail else ""))
+
+    con.print("\nsuggested: " + " -> ".join(p.model for p in suggest_order(results)))
+    if not would_change(results):
+        con.print("[green]the chain is already in that order.[/green]")
+        return
+    if not apply:
+        con.print("[dim]run again with --reorder to apply it.[/dim]")
+        return
+
+    chain = as_chain(results)
+    patch_settings({"llm.primary": chain["primary"],
+                    "llm.fallbacks": chain["fallbacks"]})
+    con.print(f"[green]reordered[/green] — primary is now "
+              f"{chain['primary'].get('model')}")
+
+
 @config_app.command("models")
 def config_models(
     set_primary: str = typer.Option(
@@ -1042,6 +1079,13 @@ def config_models(
         None, "--task", help="Task to override, e.g. cover_letter."),
     task_model: str = typer.Option(
         None, "--task-model", help="Model for --task, or 'primary' to clear it."),
+    probe: bool = typer.Option(
+        False, "--probe",
+        help="Call every link once and report what it does. Writes nothing."),
+    reorder: bool = typer.Option(
+        False, "--reorder",
+        help="Probe, then put the working models first. Free-tier quotas "
+             "move, so the right order moves with them."),
     json_out: bool = typer.Option(False, "--json", help="Machine-readable output."),
 ) -> None:
     """Show or change the model chain: primary, fallbacks and per-task overrides.
@@ -1052,6 +1096,10 @@ def config_models(
     itself.
     """
     from .web import api as _api
+
+    if probe or reorder:
+        _probe_chain(apply=reorder)
+        return
 
     updates: dict = {}
     if set_primary or base_url or key_env:

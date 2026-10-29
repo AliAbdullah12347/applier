@@ -474,6 +474,62 @@ function doctorCard() {
  * Nothing on this screen is a secret. What is edited is the NAME of the
  * environment variable holding a key; the key itself is set in the card above
  * and lives in the OS keychain. */
+/* Call every link once and show what each actually does. */
+function probeRow(ctx) {
+  const out = el('div', { class: 'u-mt-10px' });
+  const btn = el('button', { class: 'btn btn-sm' }, 'Test every model');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    clear(out).appendChild(el('div', { class: 'dim small' },
+      'Calling each model once — a few seconds each, and it writes nothing.'));
+    let r;
+    try {
+      r = await post('/api/models/probe');
+    } catch (e) {
+      clear(out).appendChild(el('div', { class: 'banner bad' }, e.message));
+      btn.disabled = false;
+      return;
+    }
+    const tone = { ok: 'ok', rate_limited: 'warn', unavailable: 'warn',
+                   no_key: 'warn', timeout: 'bad', error: 'bad' };
+    const tb = el('tbody');
+    for (const p of r.probes || []) {
+      tb.appendChild(el('tr', {},
+        el('td', { class: 'shrink' }, pill(p.state.replace(/_/g, ' '), tone[p.state] || 'warn')),
+        el('td', { class: 'mono small' }, p.model),
+        el('td', { class: 'shrink small dim right' }, `${p.seconds.toFixed(1)}s`),
+        el('td', { class: 'small dim' }, p.detail || '')));
+    }
+    clear(out).appendChild(el('table', {}, tb));
+    if (!r.would_change) {
+      out.appendChild(el('div', { class: 'banner ok u-mt-10px' },
+        'Already in the best order: whatever answers is tried first.'));
+      btn.disabled = false;
+      return;
+    }
+    const apply = el('button', { class: 'btn btn-sm' }, 'Use this order');
+    apply.addEventListener('click', async () => {
+      apply.disabled = true;
+      try {
+        await put('/api/models', r.chain);
+        toast('Model chain reordered', 'ok');
+        if (ctx && ctx.refresh) ctx.refresh();
+      } catch (e) {
+        toast(e.message, 'bad');
+        apply.disabled = false;
+      }
+    });
+    out.appendChild(el('div', { class: 'u-mt-10px' },
+      el('div', { class: 'dim small u-mb-10px' },
+        `Suggested: ${(r.suggested || []).join('  →  ')}. A model that `
+        + 'answers goes first; after that the ones that fail fastest, because '
+        + 'every link is tried in turn and pays its own timeout.'),
+      apply));
+    btn.disabled = false;
+  });
+  return el('div', { class: 'u-mt-12px' }, btn, out);
+}
+
 async function chainCard(ctx) {
   const card = el('div', { class: 'card' },
     el('h2', {}, 'Model chain',
@@ -607,6 +663,11 @@ async function chainCard(ctx) {
       el('span', { class: 'dim small' },
         'Checked before anything is written — an unknown provider or a '
         + 'missing endpoint is refused with the reason.')));
+
+    /* The order of a chain is only right until a quota moves, and nothing
+     * here shows a link failing: the chain reports whichever model finally
+     * answered, never the ones that burned a minute first. */
+    body.appendChild(probeRow(ctx));
 
     body.appendChild(el('p', { class: 'muted small u-mt-12px' },
       'Any vendor exposing an OpenAI-compatible /chat/completions works '
