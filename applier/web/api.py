@@ -1221,6 +1221,52 @@ def get_models(_body=None, **_kw) -> dict:
     }
 
 
+def probe_models(_body=None, **_kw) -> dict:
+    """Call every link once and report it. Writes nothing.
+
+    The order of a chain is only right until a quota moves, and nothing on
+    screen shows a link failing -- the chain reports whichever model
+    eventually answered, not the three that burned a minute first.
+    """
+    from ..llm.probe import as_chain, probe_chain, suggest_order, would_change
+
+    settings, _ = _cfg()
+    results = probe_chain(settings)
+    return {"probes": [p.as_dict() for p in results],
+            "suggested": [p.model for p in suggest_order(results)],
+            "would_change": would_change(results),
+            "chain": as_chain(results)}
+
+
+def prepare_application(body=None, **_kw) -> dict:
+    """Documents and answers for a page this program cannot reach itself.
+
+    Handshake sits behind a university sign-on, and `applier apply` drives a
+    browser that is nobody: no session, so it sees a login page and stops.
+    The browser that *is* signed in is the one already open. The extension
+    sends what the page says about itself and the fields it found, and gets
+    back a tailored resume and an answer for each.
+
+    Nothing is submitted here and no browser is held. The decision to send
+    stays in the session that is actually authenticated.
+    """
+    from ..apply.prepare import prepare
+
+    body = body or {}
+    job = body.get("job") or {}
+    if not str(job.get("url") or "").strip():
+        raise ApiError("job.url is required")
+    fields = body.get("fields") or []
+    if not isinstance(fields, list):
+        raise ApiError("fields must be a list")
+
+    settings, profile = _cfg()
+    db = get_db()
+    out = prepare(job, fields, settings, profile, db)
+    db.log("prepare", f"{out.get('company')} - {out.get('title')}"[:200])
+    return out
+
+
 def put_models(body, **_kw) -> dict:
     """Replace the chain. Validated before anything is written.
 

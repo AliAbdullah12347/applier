@@ -126,11 +126,75 @@ def test_the_extension_talks_to_nowhere_but_this_machine():
                     f"{f.name} references a remote host: {url}"
 
 
-def test_host_permissions_are_loopback_only():
+# Sites the extension is allowed to touch, and why each one is here.
+#
+# This list was loopback-only, which was the right rule while the extension
+# did nothing but hand a URL to the local server. Handshake broke that: it
+# is behind a university sign-on, so `applier apply` drives a browser with
+# no session, reaches a login page and stops. The only browser that can
+# fill that form is the one already signed in.
+#
+# So the rule is no longer "loopback only" but "loopback, plus named sites
+# this fills, and nothing wildcarded". Adding a host here is a decision to
+# let this read and type into somebody's authenticated session on it.
+ALLOWED_SITES = {
+    "https://*.joinhandshake.com/*": "fills the application in a signed-in tab",
+}
+
+
+def test_host_permissions_are_loopback_or_a_named_site():
     manifest = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
     for perm in manifest["host_permissions"]:
-        assert perm.startswith(("http://127.0.0.1", "http://localhost")), \
-            f"host permission reaches beyond this machine: {perm}"
+        if perm.startswith(("http://127.0.0.1", "http://localhost")):
+            continue
+        assert perm in ALLOWED_SITES, (
+            f"host permission {perm} is not a site this extension fills. "
+            f"Adding one means letting it read an authenticated session, so "
+            f"it goes in ALLOWED_SITES with a reason or it does not go in.")
+        host = perm.split("//", 1)[1].split("/", 1)[0]
+        assert "*" not in host.replace("*.", "", 1), (
+            f"{perm} wildcards more than a subdomain")
+
+
+def test_a_content_script_runs_only_on_sites_that_were_granted():
+    manifest = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
+    granted = set(manifest["host_permissions"])
+    for entry in manifest.get("content_scripts", []):
+        for match in entry["matches"]:
+            assert match in granted, (
+                f"content script injected on {match}, which is not in "
+                f"host_permissions -- the two must agree or the manifest is "
+                f"claiming less than it does")
+
+
+def test_the_page_script_never_talks_to_anything():
+    """The content script is the part that runs inside someone's signed-in
+    session, so it gets no network of its own.
+
+    It reads the page and exchanges messages with the popup, and that is
+    all. The popup is what reaches loopback, under a CSP that allows only
+    loopback. If this file could fetch, the whole shape of the guarantee
+    would change: a script on a page containing a student's academic record
+    would be one line away from sending it somewhere.
+    """
+    src = (EXT / "handshake.js").read_text(encoding="utf-8")
+    for sink in ("fetch(", "XMLHttpRequest", "WebSocket", "EventSource",
+                 "navigator.sendBeacon", "import(", "importScripts"):
+        assert sink not in src, f"handshake.js uses {sink}"
+
+
+def test_the_page_script_does_not_submit():
+    """Filling is reversible by looking at it. Submitting is not.
+
+    A Handshake application goes to an employer who can see the candidate's
+    whole profile, and the server side has already demonstrated what a
+    half-filled submission costs: the posting is spent and never retried.
+    """
+    src = (EXT / "handshake.js").read_text(encoding="utf-8")
+    for sink in (".submit()", "requestSubmit", "form.submit"):
+        assert sink not in src, f"handshake.js calls {sink}"
+    assert "click()" not in src, (
+        "clicking anything on the page risks clicking submit")
 
 
 def test_the_extension_asks_for_no_broad_permissions():

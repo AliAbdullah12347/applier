@@ -81,6 +81,7 @@ async function boot() {
   renderLevels(state.autonomy);
   renderFunnel(state.funnel, state.open_asks);
   $('apply').disabled = !currentUrl;
+  $('handshake').hidden = !onHandshake(currentUrl);
   await refreshTasks();
 }
 
@@ -182,6 +183,71 @@ $('refresh').onclick = refreshTasks;
 $('open-dash').onclick = async () => {
   const { port, token } = await settings();
   chrome.tabs.create({ url: `http://127.0.0.1:${port}/#t=${token}` });
+};
+
+/* ------------------------------------------------------------- handshake -- */
+/* Handshake is behind a university sign-on, so the server's own browser sees
+ * a login page and stops. This one is signed in. The server prepares the
+ * documents and the answers; the content script puts them on the form; and
+ * nothing submits -- the form is left on screen with a summary of what was
+ * filled, what was left for him, and why.
+ */
+const onHandshake = (u) => /^https:\/\/[^/]*\.joinhandshake\.com\//.test(u || '');
+
+async function askTab(type, extra = {}) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) throw new Error('no active tab');
+  const res = await chrome.tabs.sendMessage(tab.id, { type, ...extra });
+  if (!res?.ok) throw new Error(res?.error || 'the page did not answer');
+  return res;
+}
+
+function summarise(result, prepared) {
+  const bits = [];
+  if (result.filled.length) bits.push(`${result.filled.length} field(s) filled`);
+  if (result.attached) bits.push('resume attached');
+  if (result.skipped.length) bits.push(`${result.skipped.length} left for you`);
+  if (result.failed.length) bits.push(`${result.failed.length} failed`);
+  const lines = [bits.join(', ') || 'nothing to fill', ''];
+  for (const s of result.skipped.slice(0, 6)) {
+    lines.push(`• ${s.label || s.selector}: ${s.why || 'not certain enough to type'}`);
+  }
+  for (const u of (prepared.unanswered || []).slice(0, 6)) {
+    lines.push(`• ${u.label || u.selector}: no answer on file`);
+  }
+  lines.push('', 'Nothing was submitted. Check it and press submit yourself.');
+  return lines.join('\n');
+}
+
+$('handshake').onclick = async () => {
+  const btn = $('handshake');
+  const msg = $('handshake-msg');
+  btn.disabled = true;
+  msg.hidden = false;
+  msg.className = 'msg';
+  msg.textContent = 'Reading the page…';
+  try {
+    const { job, fields } = await askTab('handshake:scan');
+    msg.textContent = `Tailoring a resume for ${job.company || 'this employer'}…`;
+    const prepared = await api('/api/prepare', {
+      method: 'POST', body: { job, fields }, timeoutMs: 180000,
+    });
+    if (!prepared.ok) {
+      msg.className = 'msg bad';
+      msg.textContent = `Not eligible: ${prepared.reason}`;
+      btn.disabled = false;
+      return;
+    }
+    msg.textContent = 'Filling the form…';
+    const { result } = await askTab('handshake:fill', { prepared });
+    msg.className = 'msg ok';
+    msg.textContent = summarise(result, prepared);
+    btn.textContent = 'Filled — submit it yourself';
+  } catch (e) {
+    msg.className = 'msg bad';
+    msg.textContent = e.message;
+    btn.disabled = false;
+  }
 };
 
 boot();

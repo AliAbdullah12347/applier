@@ -16,6 +16,7 @@ point: editing it is the moment you decide what the other front door should do.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -52,7 +53,8 @@ PARITY: dict[str, tuple[str, ...]] = {
     "bank-preview": ("POST /api/bank/preview",),
     "config-set-key": ("PUT /api/secrets",),
     "config-show":    ("GET /api/settings",),
-    "config-models":  ("GET /api/models", "PUT /api/models"),
+    "config-models":  ("GET /api/models", "PUT /api/models",
+                       "POST /api/models/probe"),
     "browsers-where":   ("GET /api/browsers",),
     "browsers-install": ("POST /api/browsers/install",),
     "confirm":        ("POST /api/acknowledgements",),
@@ -63,6 +65,12 @@ PARITY: dict[str, tuple[str, ...]] = {
 
 # GUI-only routes, and why the CLI does not need them.
 GUI_ONLY = {
+    "POST /api/prepare": (
+        "the extension fills a page in the browser that is already signed "
+        "in. The CLI equivalent is `applier apply <url>`, which drives its "
+        "own browser -- and that browser has no session, so on Handshake or "
+        "an SSO Workday it reaches a login page and stops. A command here "
+        "would have no page to put the answers on."),
     "GET /api/paths":                       "a display aid",
     "GET /api/events":                      "the CLI prints events as they happen",
     "GET /api/jobs":                        "`rank` prints the same table",
@@ -277,3 +285,43 @@ def test_the_ui_loads_nothing_from_the_network():
                 continue
             for tag in ("src=\"http", "src='http", "href=\"http", "@import url(http"):
                 assert tag not in line, f"{f.name} loads a remote resource: {line.strip()[:80]}"
+
+
+# --------------------------------------------------------------------------- #
+# a button that calls nothing
+# --------------------------------------------------------------------------- #
+def test_every_endpoint_the_ui_calls_exists():
+    """The tables above check the two front doors against each other and
+    never check the panels against the server.
+
+    A "Test every model" button shipped calling `POST /api/models/probe`
+    when no such route was registered. The CLI had the feature, PARITY was
+    not updated, so nothing failed -- and the button was reported as working
+    because it existed in the markup. The gap is that a panel can name an
+    endpoint nobody serves.
+    """
+    served = {route.split(" ", 1)[1] for route in _gui_routes()}
+    # Not every path goes through the route table: the SSE stream is matched
+    # by hand in the request handler, because it holds its thread open and
+    # the table is for ordinary request/response.
+    served |= set(re.findall(r're\.fullmatch\(r"([^"]+)"', SERVER.read_text(encoding="utf-8")))
+
+    # A route carries {placeholders}; a call site carries template literals.
+    patterns = [re.compile("^" + re.sub(r"\{[^}]+\}", "[^/]+", r)
+                           .replace("([^/]+)", "[^/]+") + "$")
+                for r in served]
+
+    missing: list[str] = []
+    for js in sorted(STATIC.rglob("*.js")):
+        src = js.read_text(encoding="utf-8")
+        for call in re.findall(r"""['"`](/api/[A-Za-z0-9_\-/${}.]*)['"`]""", src):
+            # A trailing `${...}` that does not follow a slash is a query
+            # string being appended, not another path segment.
+            path = re.sub(r"(?<!/)\$\{[^}]+\}$", "", call)
+            path = re.sub(r"\$\{[^}]+\}", "x", path).rstrip("/") or "/api"
+            if any(p.match(path) for p in patterns):
+                continue
+            missing.append(f"{js.name} calls {call}")
+    assert not missing, (
+        "the UI calls endpoint(s) the server does not serve:\n  "
+        + "\n  ".join(missing))
