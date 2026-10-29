@@ -158,12 +158,25 @@ def test_a_submission_is_recorded_before_anything_that_can_fail(tmp_path):
     from applier import pipeline
 
     src = inspect.getsource(pipeline._execute_application)
-    click_at = src.index("sess.click(selector)\n                submitted = True")
+    click_at = src.index("clicked = sess.click(selector)")
     record_at = src.index("_record_submission(db, job, settings)")
     settle_at = src.index("sess.settle(1500)")
 
     assert click_at < record_at < settle_at, (
         "the submission is recorded after something that can fail")
+
+    # One check now sits between the click and the record: whether the form
+    # came back with its errors instead of accepting anything. It reads the
+    # page, and reading a page mid-navigation throws -- which is what a
+    # *successful* submit looks like. So it has to be incapable of raising:
+    # the whole inspection is one try that defaults to "submitted". Without
+    # that default an exception reaches the outer handler, the row is marked
+    # failed, and the next run applies again to a job already sent.
+    between = src[click_at:record_at]
+    assert "try:" in between, "the post-click inspection must be guarded"
+    default_at = between.index("submitted, why = True")
+    assert default_at < between.index("try:"), (
+        "the safe default has to be set before the part that might not finish")
 
 
 def test_the_record_survives_a_failure_immediately_afterwards(tmp_path):

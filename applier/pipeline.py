@@ -248,7 +248,7 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                          db: Database, *, console=None) -> str:
     """The shared core. Identical for pasted links and self-found jobs."""
     from .apply.accounts import AccountStore, MailVerifier
-    from .apply import confirm
+    from .apply import confirm, readiness
     from .apply.adapters import for_ats
     from .apply.answers import AnswerBank, HaltForInput
     from .apply.browser import Session, detect_ats
@@ -448,6 +448,31 @@ def _execute_application(job: dict, settings: Config, profile: Config,
             if not selector:
                 break
             if is_submit:
+                # What the form still wants. The harvester has reported
+                # `required` and `value` since it was written and nothing
+                # read them together, so a page with six of its fields
+                # answered was submitted as readily as a complete one --
+                # and the row went down as sent, which spends the posting
+                # for good because applications dedupe by job_id.
+                gaps = readiness.unfilled_required(filler.harvest(page))
+                if gaps and mode != "review":
+                    names = ", ".join(str(g) for g in gaps[:6])
+                    db.run("UPDATE applications SET status='needs_input', "
+                           "failure_reason=?, artifact_dir=?, answers_json=?, "
+                           "screenshots=? WHERE job_id=?",
+                           (f"{len(gaps)} required field(s) unanswered: {names}"[:400],
+                            _rel_artifact(artifact), json.dumps(audit_trail),
+                            json.dumps(shots), job_id))
+                    for gap in gaps:
+                        if gap.label:
+                            bank.enqueue_ask(gap.label, job_id=job_id,
+                                             context=f"{job['company']} — {job['title']}")
+                    return (f"Not submitted: {len(gaps)} required field(s) are "
+                            f"still empty, and a submit that will bounce costs "
+                            f"the posting.\n  {names}\n"
+                            f"  Run `applier asks` to answer these once, then "
+                            f"apply again.")
+
                 if mode == "review":
                     db.run("UPDATE applications SET status='ready', artifact_dir=?, "
                            "answers_json=?, screenshots=? WHERE job_id=?",
@@ -464,7 +489,49 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                 # tomorrow to a job the employer already has. It is recorded
                 # as evidence instead, which is what it actually is.
                 clicked = sess.click(selector)
-                submitted = True
+
+                # A click is not a submission. A form that accepted its
+                # input stops being a form -- it navigates, or it is
+                # replaced. One still showing the same required fields,
+                # still empty, at the same address accepted nothing.
+                #
+                # The whole inspection sits inside this try and defaults to
+                # "submitted", so that nothing between the click and the
+                # record below can raise. That ordering is not decoration:
+                # settling, harvesting and reading a URL can each throw on a
+                # page that is mid-navigation -- which is what a *successful*
+                # submit looks like -- and an exception here would reach the
+                # outer handler, mark the row failed, and have the next run
+                # apply again to a job the employer already has.
+                #
+                # So this can only ever find a reason NOT to record one, and
+                # only on positive evidence that the form is still on screen.
+                # Every ambiguous outcome, and every failure to look at all,
+                # stays "submitted".
+                submitted, why = True, "nothing contradicted it"
+                try:
+                    sess.settle(2000)
+                    after = readiness.unfilled_required(filler.harvest(page))
+                    submitted, why = readiness.looks_submitted(
+                        form_url=target, final_url=page.url,
+                        page_text=page.inner_text("body"),
+                        gaps_before=len(gaps), gaps_after=len(after))
+                except Exception as exc:                # noqa: BLE001
+                    why = f"could not read the page afterwards: {str(exc)[:120]}"
+
+                if not submitted:
+                    sess.screenshot(artifact / "rejected.png")
+                    db.run("UPDATE applications SET status='needs_input', "
+                           "failure_reason=?, artifact_dir=?, answers_json=?, "
+                           "screenshots=? WHERE job_id=?",
+                           (f"submit did not go through: {why}"[:400],
+                            _rel_artifact(artifact), json.dumps(audit_trail),
+                            json.dumps(shots), job_id))
+                    return (f"Not submitted: {why}.\n"
+                            f"  The posting is kept, not spent -- apply again "
+                            f"once the gaps are answered.\n"
+                            f"  artifacts: {artifact}")
+
                 # Written here, not thirty lines further down, because
                 # everything between is housekeeping -- settling the page,
                 # the final screenshot, serialising the audit trail -- and

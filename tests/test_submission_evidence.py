@@ -287,9 +287,19 @@ def test_a_failed_click_is_still_recorded_as_submitted():
 
     src = inspect.getsource(pipeline._execute_application)
     assert "clicked = sess.click(selector)" in src
-    assert "submitted = True" in src
     i = src.index("clicked = sess.click(selector)")
-    after = src[i:i + 600]
-    assert "submitted = True" in after, "the click's result must not gate the status"
-    assert "if clicked" not in after.split("submitted = True")[0], (
-        "nothing may sit between the click and the row being marked submitted")
+    after = src[i:src.index("_record_submission(db, job, settings)")]
+
+    # The default, set before anything is inspected.
+    assert "submitted, why = True" in after, (
+        "the click's own result must not gate the status")
+    assert "if clicked" not in after.split("submitted, why = True")[0], (
+        "the click's return value may not decide whether this was submitted")
+
+    # What may overturn that default is narrow, and `looks_submitted` is the
+    # only thing allowed to: it answers "not sent" solely on evidence that
+    # the form is still on screen -- the same required fields, still empty,
+    # at an unchanged address. Anything else, including being unable to look
+    # at all, stays submitted.
+    assert "readiness.looks_submitted" in after
+    assert after.count("submitted") >= 2
