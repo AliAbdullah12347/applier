@@ -455,23 +455,41 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                 # and the row went down as sent, which spends the posting
                 # for good because applications dedupe by job_id.
                 gaps = readiness.unfilled_required(filler.harvest(page))
-                if gaps and mode != "review":
-                    names = ", ".join(str(g) for g in gaps[:6])
+
+                # And what the browser thinks, which is not the same
+                # question. The harvest is second-hand: it sees the fields
+                # this program managed to read, with the visibility rules
+                # this program applies. `checkValidity()` is the computation
+                # the browser itself runs when a submit is pressed -- every
+                # constraint at once, over fields the harvest skipped, and
+                # over constraints it never models, like an email that is
+                # present and malformed. Asking both means a field invisible
+                # to one is still caught by the other.
+                verdict = readiness.ask_browser(page)
+
+                if (gaps or verdict.blocked) and mode != "review":
+                    why = [f"{g}: required, and empty" for g in gaps[:6]]
+                    for reason in verdict.reasons:
+                        if not any(reason.split(":")[0] in w for w in why):
+                            why.append(reason)
+                    names = "; ".join(why[:8]) or "the page refuses the form"
                     db.run("UPDATE applications SET status='needs_input', "
                            "failure_reason=?, artifact_dir=?, answers_json=?, "
                            "screenshots=? WHERE job_id=?",
-                           (f"{len(gaps)} required field(s) unanswered: {names}"[:400],
+                           (f"the form is not complete: {names}"[:400],
                             _rel_artifact(artifact), json.dumps(audit_trail),
                             json.dumps(shots), job_id))
+                    sess.screenshot(artifact / "incomplete.png")
                     for gap in gaps:
                         if gap.label:
                             bank.enqueue_ask(gap.label, job_id=job_id,
                                              context=f"{job['company']} — {job['title']}")
-                    return (f"Not submitted: {len(gaps)} required field(s) are "
-                            f"still empty, and a submit that will bounce costs "
-                            f"the posting.\n  {names}\n"
-                            f"  Run `applier asks` to answer these once, then "
-                            f"apply again.")
+                    listed = "\n  ".join(why[:8])
+                    return (f"Not submitted: the form is not complete, and a "
+                            f"submit that will bounce costs the posting.\n"
+                            f"  {listed}\n"
+                            f"  Run `applier asks` to answer what is missing, "
+                            f"then apply again.")
 
                 if mode == "review":
                     db.run("UPDATE applications SET status='ready', artifact_dir=?, "
@@ -516,6 +534,13 @@ def _execute_application(job: dict, settings: Config, profile: Config,
                         form_url=target, final_url=page.url,
                         page_text=page.inner_text("body"),
                         gaps_before=len(gaps), gaps_after=len(after))
+                    # Name the fields rather than the symptom. "7 required
+                    # field(s) still empty" says a form bounced; "Phone
+                    # number: required, and empty" says what to do about it.
+                    if not submitted:
+                        complaint = readiness.ask_browser(page)
+                        if complaint.reasons:
+                            why = f"{why} -- {'; '.join(complaint.reasons[:4])}"
                 except Exception as exc:                # noqa: BLE001
                     why = f"could not read the page afterwards: {str(exc)[:120]}"
 

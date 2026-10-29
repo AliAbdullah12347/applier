@@ -95,6 +95,37 @@ function evidenceOf(a) {
   return EVIDENCE[a.evidence] || EVIDENCE.clicked;
 }
 
+/* Take a posting back out of "already applied".
+ *
+ * Applications dedupe by job_id, so a row saying submitted removes the
+ * posting from circulation for good -- right when it was sent, wrong when
+ * it was not. This is the only thing in the program that walks a submission
+ * back, and it stays a thing a person does by hand: anything automatic that
+ * could decide a submission did not happen is something that applies twice.
+ */
+function reclaimRow(ctx, app) {
+  const out = el('span', { class: 'dim small' });
+  const btn = el('button', { class: 'btn btn-sm' }, 'Mark as never sent');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    clear(out).appendChild(el('span', {}, 'Taking it back…'));
+    try {
+      await post(`/api/applications/${app.id}/reclaim`,
+                 { reason: 'checked and it never arrived' });
+      clear(out).appendChild(el('span', { class: 'ok' },
+        'The posting can be applied to again.'));
+      if (ctx && ctx.refresh) ctx.refresh();
+    } catch (e) {
+      clear(out).appendChild(el('span', { class: 'bad' }, e.message));
+      btn.disabled = false;
+    }
+  });
+  return el('div', {}, btn, ' ', out,
+    el('div', { class: 'dim small u-mt-4px' },
+      'Check your inbox and the employer’s portal first. If it did '
+      + 'arrive and you mark it never sent, the next run applies again.'));
+}
+
 /* ------------------------------------------------------------------ entry -- */
 export async function render(ctx) {
   revokeBlobs();
@@ -347,6 +378,9 @@ async function detailView(ctx, id) {
     if (app.acknowledged_at) {
       kvAdd('Acknowledged', `${fmtDate(app.acknowledged_at)} · ${fmtAgo(app.acknowledged_at)}`);
     }
+    /* Only offered where it is plausibly wrong. A row the employer
+     * acknowledged is not a candidate for "this never happened". */
+    if (app.evidence !== 'acknowledged') kvAdd('If this never arrived', reclaimRow(ctx, app));
   }
   if (typeof app.field_count === 'number') {
     kvAdd('Fields answered', app.field_count

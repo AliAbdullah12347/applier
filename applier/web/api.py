@@ -513,6 +513,42 @@ def _within(child: Path, parent: Path) -> bool:
         return False
 
 
+def reclaim_application(body=None, *, app_id: int, **_kw) -> dict:
+    """Mark an application as never sent, so the posting can be used again.
+
+    Applications dedupe by `job_id`, so a row that says `submitted` takes
+    the posting out of circulation permanently -- which is right when it was
+    sent and wrong when it was not. Six fields on an Ashby form were
+    recorded as an application, and nothing would ever have tried that job
+    again.
+
+    This is the only thing in the program that walks a submission back, and
+    it is deliberately the one thing a person has to do by hand. Nothing
+    automatic may reach it: an unattended run that could decide a submission
+    did not happen is an unattended run that applies twice, which is the
+    worst thing this system does.
+    """
+    reason = str((body or {}).get("reason") or "").strip()
+    db = get_db()
+    row = db.one("SELECT a.*, j.company, j.title FROM applications a "
+                 "JOIN jobs j ON j.id = a.job_id WHERE a.id=?", (app_id,))
+    if not row:
+        raise ApiError("no such application", 404)
+    if row["status"] != "submitted":
+        raise ApiError(f"this application is {row['status']}, not submitted; "
+                       f"there is nothing to take back")
+
+    db.run("UPDATE applications SET status='needs_input', submitted_at=NULL, "
+           "evidence=NULL, evidence_detail=NULL, acknowledged_at=NULL, "
+           "failure_reason=? WHERE id=?",
+           (f"marked never-sent by hand{': ' + reason if reason else ''}"[:400],
+            app_id))
+    db.log("reclaimed", f"application {app_id} ({row['company']} - "
+                        f"{row['title']}) marked never sent", job_id=row["job_id"])
+    return {"ok": True, "job_id": row["job_id"],
+            "company": row["company"], "title": row["title"]}
+
+
 def set_outcome(body, *, app_id: int, **_kw) -> dict:
     allowed = {"acknowledged", "oa", "interview", "rejection", "offer", "ghosted", ""}
     outcome = (body or {}).get("outcome", "")

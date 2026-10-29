@@ -148,3 +148,142 @@ def test_a_bounced_submit_does_not_mark_the_row_submitted():
     body = after[:after.index("_record_submission")]
     assert "status='needs_input'" in body, (
         "a form that bounced must leave the posting re-appliable")
+
+
+# --------------------------------------------------------------------------- #
+# asking the browser, not just the harvest
+# --------------------------------------------------------------------------- #
+# The harvest is second-hand: it sees the fields this program managed to
+# read, under its own visibility rules. `checkValidity()` is the computation
+# the browser runs when a submit is pressed -- every constraint at once,
+# over fields the harvest skipped, and over constraints it never models,
+# like an email that is present and malformed.
+class FakePage:
+    def __init__(self, result):
+        self._result = result
+
+    def evaluate(self, _js):
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def test_a_browser_that_refuses_the_form_blocks_the_submit():
+    from applier.apply.readiness import ask_browser
+
+    v = ask_browser(FakePage({
+        "forms": 1, "blocked": True, "flagged": [],
+        "invalid": [{"label": "Phone number", "why": "required, and empty"}]}))
+    assert v.blocked and not v
+    assert v.reasons == ["Phone number: required, and empty"]
+
+
+def test_a_framework_error_counts_even_when_the_browser_is_happy():
+    """React validation does not use the constraint API: it marks the field
+    and writes the complaint beside it. Those fields are valid as far as
+    checkValidity is concerned and are why a form bounces anyway."""
+    from applier.apply.readiness import ask_browser
+
+    v = ask_browser(FakePage({"forms": 1, "blocked": False, "invalid": [],
+                              "flagged": ["Work authorization"]}))
+    assert v.blocked
+    assert "Work authorization" in v.reasons[0]
+
+
+def test_a_valid_form_is_not_blocked():
+    from applier.apply.readiness import ask_browser
+
+    v = ask_browser(FakePage({"forms": 1, "blocked": False,
+                              "invalid": [], "flagged": []}))
+    assert not v.blocked and v and v.reasons == []
+
+
+def test_a_page_that_cannot_be_asked_does_not_block():
+    """Mid-navigation, detached, no form at all. This is one input of two,
+    and neither may turn an unreadable page into a refusal to submit."""
+    from applier.apply.readiness import ask_browser
+
+    assert not ask_browser(FakePage(RuntimeError("context destroyed"))).blocked
+    assert not ask_browser(FakePage(None)).blocked
+
+
+def test_the_reasons_name_the_field_not_the_symptom():
+    """"7 required field(s) still empty" says a form bounced. "Phone number:
+    required, and empty" says what to do about it."""
+    from applier.apply.readiness import ask_browser
+
+    v = ask_browser(FakePage({
+        "forms": 1, "blocked": True, "flagged": [],
+        "invalid": [{"label": "Email", "why": "not a valid email"},
+                    {"label": "Start date", "why": "out of range"}]}))
+    assert v.reasons == ["Email: not a valid email",
+                         "Start date: out of range"]
+
+
+def test_both_sources_are_consulted_before_a_submit():
+    import inspect
+
+    from applier import pipeline
+
+    src = inspect.getsource(pipeline._execute_application)
+    gate = src[src.index("gaps = readiness.unfilled_required"):
+               src.index("clicked = sess.click(selector)")]
+    assert "readiness.ask_browser" in gate, (
+        "a required field the harvester cannot see is invisible to the "
+        "harvest check; the browser is the other half of the answer")
+    assert "gaps or verdict.blocked" in gate, "either source must be able to stop it"
+
+
+# --------------------------------------------------------------------------- #
+# taking a posting back
+# --------------------------------------------------------------------------- #
+def test_only_a_submitted_row_can_be_reclaimed(tmp_path, monkeypatch):
+    from applier.db import Database, now
+    from applier.web import api
+
+    db = Database(tmp_path / "t.db")
+    db.run("INSERT INTO jobs(fingerprint,weak_key,source,company,title,url,"
+           "first_seen_at,last_seen_at) VALUES('f','w','t','Northwind','Intern',"
+           "'https://example.com/1',?,?)", (now(), now()))
+    db.run("INSERT INTO applications(job_id,started_at,status) "
+           "VALUES(1,?,'needs_input')", (now(),))
+    monkeypatch.setattr(api, "get_db", lambda: db)
+
+    with pytest.raises(api.ApiError, match="nothing to take back"):
+        api.reclaim_application({}, app_id=1)
+
+
+def test_reclaiming_puts_the_posting_back_in_circulation(tmp_path, monkeypatch):
+    """A row saying submitted removes the posting for good, because
+    applications dedupe by job_id."""
+    from applier.db import Database, now
+    from applier.web import api
+
+    db = Database(tmp_path / "t.db")
+    db.run("INSERT INTO jobs(fingerprint,weak_key,source,company,title,url,"
+           "first_seen_at,last_seen_at) VALUES('f','w','t','Northwind','Intern',"
+           "'https://example.com/1',?,?)", (now(), now()))
+    db.run("INSERT INTO applications(job_id,started_at,submitted_at,status,"
+           "evidence) VALUES(1,?,?,'submitted','clicked')", (now(), now()))
+    monkeypatch.setattr(api, "get_db", lambda: db)
+
+    out = api.reclaim_application({"reason": "never arrived"}, app_id=1)
+    assert out["ok"] and out["company"] == "Northwind"
+    row = db.one("SELECT * FROM applications WHERE id=1")
+    assert row["status"] == "needs_input"
+    assert row["submitted_at"] is None
+    assert row["evidence"] is None
+    assert "never-sent" in row["failure_reason"]
+
+
+def test_nothing_automatic_can_reclaim():
+    """The one thing that walks a submission back stays a thing a person
+    does by hand. An unattended run that could decide a submission did not
+    happen is an unattended run that applies twice."""
+    import inspect
+
+    from applier import pipeline
+
+    src = inspect.getsource(pipeline)
+    assert "reclaim" not in src, (
+        "the pipeline must never reclaim an application on its own")

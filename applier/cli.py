@@ -1321,6 +1321,35 @@ def browsers_install() -> None:
     raise typer.Exit(1)
 
 
+@app.command("reclaim")
+def reclaim_cmd(
+    app_id: int = typer.Argument(..., help="Application id, from `applier status`."),
+    reason: str = typer.Option("", "--reason", help="What you checked."),
+) -> None:
+    """Mark an application as never sent, so the posting can be used again.
+
+    Applications dedupe by job_id, so a row saying `submitted` takes the
+    posting out of circulation for good. That is right when it was sent and
+    wrong when it was not -- six fields on an Ashby form were recorded as an
+    application, and nothing would ever have tried that job again.
+
+    The only thing here that walks a submission back, and deliberately the
+    one thing a person has to do by hand: anything automatic that could
+    decide a submission did not happen is something that applies twice.
+    """
+    from .web import api as _api
+
+    _load()
+    try:
+        out = _api.reclaim_application({"reason": reason}, app_id=app_id)
+    except Exception as e:                              # noqa: BLE001
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    con.print(f"[green]taken back[/green] {out['company']} — {out['title']}")
+    con.print("[dim]the posting is applicable again; `applier apply <url>` "
+              "will pick it up.[/dim]")
+
+
 def main() -> None:
     try:
         app()

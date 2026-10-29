@@ -106,6 +106,11 @@ def test_pressing_submit_actually_reaches_the_employer(served, tmp_path):
             page.fill("#email", "someone@example.com")
             page.fill("#school", "Example University")
             page.fill("#why", "Because the work is interesting.")
+            # The form grew a required field carrying a `pattern`, so that
+            # the pipeline can be shown refusing an incomplete submit.
+            # Leaving it empty here means the browser refuses outright, and
+            # this test is about the click reaching the server.
+            page.fill("#ref_code", "ABC-1234")
             page.select_option("#work_auth", "yes")
             page.select_option("#sponsorship", "yes")
             page.set_input_files("#resume", str(resume))

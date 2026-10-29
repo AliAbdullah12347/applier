@@ -107,6 +107,13 @@ FORM_PAGE = f"""<!doctype html><html><head><meta charset="utf-8">
     <option value="decline">I don't wish to answer</option>
   </select><br>
 
+  <!-- A required field the harvester cannot answer: no label text it can
+       map to anything in the profile, and a pattern the value must match.
+       This is the shape that reached submit with six of twelve answered. -->
+  <label for="ref_code">Internal reference code (format ABC-1234)</label>
+  <input type="text" id="ref_code" name="ref_code" pattern="[A-Z]{{3}}-[0-9]{{4}}"
+         required><br>
+
   <button type="submit" id="submit-application">Submit application</button>
 </form>
 </body></html>"""

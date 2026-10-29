@@ -109,6 +109,7 @@ route("POST", "/api/tasks/{task_id}/stop")(lambda b, task_id, **k: api.stop_task
 route("GET", "/api/applications")(api.list_applications)
 route("GET", "/api/applications/{app_id}")(lambda b, app_id, **k: api.get_application(b, app_id=_int(app_id), **k))
 route("POST", "/api/applications/{app_id}/outcome")(lambda b, app_id, **k: api.set_outcome(b, app_id=_int(app_id), **k))
+route("POST", "/api/applications/{app_id}/reclaim")(lambda b, app_id, **k: api.reclaim_application(b, app_id=_int(app_id), **k))
 
 route("GET", "/api/asks")(api.list_asks)
 route("POST", "/api/asks/{ask_id}")(lambda b, ask_id, **k: api.answer_ask(b, ask_id=_int(ask_id), **k))
