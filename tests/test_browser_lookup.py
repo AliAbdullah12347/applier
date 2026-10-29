@@ -183,3 +183,73 @@ def test_a_failed_install_returns_its_output_rather_than_raising(
     monkeypatch.setattr("subprocess.run", fake_run)
     ok, message = browsers.install()
     assert not ok and "network unreachable" in message
+
+
+# --------------------------------------------------------------------------- #
+# a check may not outlast the person waiting on it
+# --------------------------------------------------------------------------- #
+def test_the_model_check_is_bounded(monkeypatch):
+    """Preflight sat for two minutes and looked hung.
+
+    The chain's ladder -- four providers, four attempts, waits up to ninety
+    seconds -- is right for real work and is twenty minutes at worst. The
+    model check was spending it: 123 seconds of a 132-second run.
+    """
+    import time
+
+    from applier import preflight
+    from applier.llm import LLMError
+
+    assert preflight.MODEL_CHECK_BUDGET_S <= 60
+
+    seen = {}
+
+    class SlowRouter:
+        def __init__(self, *a, **k):
+            pass
+
+        def complete(self, system, user, *, task=None, deadline_s=None, **kw):
+            seen["deadline"] = deadline_s
+            raise LLMError("out of time after 25s; providers left untried")
+
+    monkeypatch.setattr("applier.llm.Router", SlowRouter)
+    started = time.monotonic()
+    check = preflight._check_model({}, {})
+    assert time.monotonic() - started < 5, "the check must not do the waiting itself"
+    assert seen["deadline"] == preflight.MODEL_CHECK_BUDGET_S, (
+        "the budget has to reach the router or it does nothing")
+    assert not check.ok
+    assert not check.blocking, (
+        "running out of OUR budget is this check's limit, not the system's -- "
+        "a real run has the full ladder and usually gets through")
+
+
+def test_a_real_model_failure_still_raises(monkeypatch):
+    """Only a timeout is softened. A bad key must not read as 'slow'."""
+    from applier import preflight
+    from applier.llm import LLMError
+
+    class BadKey:
+        def __init__(self, *a, **k):
+            pass
+
+        def complete(self, *a, **kw):
+            raise LLMError("gemini: no API key (GEMINI_API_KEY)")
+
+    monkeypatch.setattr("applier.llm.Router", BadKey)
+    with pytest.raises(LLMError):
+        preflight._check_model({}, {})
+
+
+def test_every_check_reports_how_long_it_took():
+    from applier.preflight import Check, _safe
+
+    slow = _safe(lambda: Check("x", True, "fine"), "x", False)
+    assert hasattr(slow, "seconds") and slow.seconds >= 0
+
+
+def test_a_check_that_throws_is_still_timed():
+    from applier.preflight import _safe
+
+    out = _safe(lambda: 1 / 0, "boom", True)
+    assert not out.ok and out.seconds >= 0

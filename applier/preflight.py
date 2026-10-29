@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -34,6 +35,11 @@ class Check:
     detail: str = ""
     blocking: bool = False
     fix: str = ""
+    # How long this check took. Preflight returns nothing until every check
+    # is done, so one slow check reads as a frozen program; knowing which
+    # one, and that it was ninety seconds rather than hung, is the
+    # difference between waiting and killing it.
+    seconds: float = 0.0
 
     @property
     def state(self) -> str:
@@ -62,7 +68,8 @@ class Report:
             "blocking": [c.name for c in self.blocking_failures],
             "checks": [
                 {"name": c.name, "ok": c.ok, "state": c.state,
-                 "detail": c.detail, "blocking": c.blocking, "fix": c.fix}
+                 "detail": c.detail, "blocking": c.blocking, "fix": c.fix,
+                 "seconds": c.seconds}
                 for c in self.checks
             ],
         }
@@ -70,13 +77,16 @@ class Report:
 
 def _safe(fn: Callable[[], Check], name: str, blocking: bool) -> Check:
     """A check that throws is a failed check, never a crashed preflight."""
+    started = time.monotonic()
     try:
-        return fn()
+        return _timed(fn(), time.monotonic() - started)
     except Exception as exc:                            # noqa: BLE001
-        return Check(name, False, f"{type(exc).__name__}: {exc}"[:200],
-                     blocking=blocking,
-                     fix="This check could not complete; the underlying problem "
-                         "is usually the real one.")
+        return _timed(
+            Check(name, False, f"{type(exc).__name__}: {exc}"[:200],
+                  blocking=blocking,
+                  fix="This check could not complete; the underlying problem "
+                      "is usually the real one."),
+            time.monotonic() - started)
 
 
 # --------------------------------------------------------------------------- #
@@ -176,14 +186,51 @@ def _check_renderer(settings: Config, profile: Config) -> Check:
                      f"one page, verified, {report.chars} extractable characters")
 
 
+# How long the model check may take before it gives up and says so. The
+# chain's own ladder -- four providers, four attempts, waits up to ninety
+# seconds -- is right for real work and is twenty minutes at worst. Spending
+# that here is why preflight looked hung: it was sitting in a rate-limit
+# backoff with nothing on screen to say so. Measured at 123s of a 132s run
+# on a chain of four.
+MODEL_CHECK_BUDGET_S = 25.0
+
+
 def _check_model(settings: Config, profile: Config) -> Check:
     """Make a real call. A rejected key looks identical to a good one until used."""
-    from .llm import Router
+    from .llm import LLMError, Router
 
     router = Router(settings, profile, None)
-    reply = router.complete(
-        "Reply with exactly the word: ready.",
-        "Say ready.", task=None)
+    try:
+        reply = router.complete(
+            "Reply with exactly the word: ready.",
+            "Say ready.", task=None, deadline_s=MODEL_CHECK_BUDGET_S)
+    except LLMError as e:
+        # Out of budget is not the same answer as "the key is wrong", and
+        # reporting it as a failure would send somebody to check a key that
+        # is fine. It blocks either way: an unattended run needs a model
+        # that answers, and one that cannot answer in 25 seconds will not
+        # get through a night of applications.
+        detail = str(e)
+        if "out of time" in detail:
+            # A warning, not a blocker, and the distinction is the point.
+            # The chain still had attempts left; what ran out was the budget
+            # this check imposes so somebody is not left watching a frozen
+            # screen. A real run keeps the full ladder -- four providers,
+            # four attempts, waits up to ninety seconds -- and routinely
+            # gets an answer where twenty-five seconds did not. Refusing to
+            # start over that would be this check's limitation standing in
+            # for the system's.
+            return Check("language model", False,
+                         f"no answer within {MODEL_CHECK_BUDGET_S:.0f}s "
+                         f"(still retrying when the budget ran out)",
+                         blocking=False,
+                         fix="Rate-limited or slow, not misconfigured -- a key "
+                             "that was wrong would have been refused outright. "
+                             "A real run allows far longer and usually gets "
+                             "through. If this keeps happening, check quota on "
+                             "the primary provider or move a model you are not "
+                             "rate-limited on to the front of the chain.")
+        raise
     text = (reply.text or "").strip().lower()
     if "ready" not in text:
         return Check("language model", False,
@@ -292,6 +339,11 @@ def _check_caps(settings: Config) -> Check:
 
 
 # --------------------------------------------------------------------------- #
+def _timed(check: Check, seconds: float) -> Check:
+    check.seconds = round(seconds, 2)
+    return check
+
+
 def run_preflight(settings: Config, profile: Config, *, deep: bool = True) -> Report:
     """Every check. `deep=False` skips the ones that cost time or quota."""
     report = Report()

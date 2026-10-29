@@ -247,3 +247,89 @@ def test_the_model_editor_never_returns_a_key():
     # a secret. Anything else key-shaped would be.
     blob = blob.replace("api_key_env", "").replace("api_key_set", "")
     assert "api_key" not in blob
+
+
+# --------------------------------------------------------------------------- #
+# a caller that cannot wait forever
+# --------------------------------------------------------------------------- #
+# The ladder is right for real work: four providers, four attempts each,
+# waits up to ninety seconds. It is also twenty minutes in the worst case,
+# and preflight was spending it -- 123 seconds of a 132-second run, with
+# nothing on screen to say what it was waiting for. `deadline_s` is the
+# ceiling a caller can set when somebody is watching.
+def _slow_chain(monkeypatch, *, attempts=4, backoff=(30, 90)) -> Router:
+    cfg = Config({
+        "llm": {
+            "primary": {"provider": "always_429", "model": "a",
+                        "api_key_env": "KEY_A"},
+            "fallbacks": [{"provider": "always_429", "model": "b",
+                           "api_key_env": "KEY_B"}],
+            "redact_pii": False,
+            "rate_limit": {"requests_per_minute": 6000,
+                           "retry_attempts": attempts,
+                           "retry_backoff_s": list(backoff),
+                           "max_concurrent": 4},
+        }
+    })
+    return Router(cfg, None, None)
+
+
+@pytest.fixture
+def always_429(monkeypatch):
+    from applier.llm.router import RateLimited
+
+    calls = {"n": 0}
+
+    def provider(spec, system, user, key, want_json):
+        calls["n"] += 1
+        raise RateLimited("429 slow down")
+
+    monkeypatch.setitem(PROVIDERS, "always_429", provider)
+    monkeypatch.setenv("KEY_A", "x")
+    monkeypatch.setenv("KEY_B", "y")
+    return calls
+
+
+def test_without_a_deadline_the_ladder_is_unchanged(always_429, monkeypatch):
+    """The budget is a ceiling, never a target. Nothing changes without one."""
+    slept: list[float] = []
+    monkeypatch.setattr("applier.llm.router.time.sleep", slept.append)
+    with pytest.raises(LLMError):
+        _slow_chain(monkeypatch, attempts=3, backoff=(30, 90)).complete("s", "u")
+    assert max(slept, default=0) >= 30, f"expected the full ladder, slept {slept}"
+
+
+def test_a_deadline_refuses_a_wait_it_cannot_afford(always_429, monkeypatch):
+    """Ninety seconds of backoff inside a twenty-five second budget is the
+    exact shape of the hang: the wait alone outlives the caller."""
+    slept: list[float] = []
+    monkeypatch.setattr("applier.llm.router.time.sleep", slept.append)
+    with pytest.raises(LLMError) as e:
+        _slow_chain(monkeypatch, attempts=3, backoff=(30, 90)).complete(
+            "s", "u", deadline_s=5)
+    # The inter-request throttle is sub-second and legitimate; a backoff is
+    # tens of seconds. Only the second kind may not happen here.
+    assert max(slept, default=0) < 1, f"took a backoff-sized wait: {slept}"
+    assert "out of time" in str(e.value) or "429" in str(e.value)
+
+
+def test_a_deadline_caps_each_request_timeout(always_429, monkeypatch):
+    """A single request may not outlive the budget that contains it."""
+    seen: list[float] = []
+
+    def provider(spec, system, user, key, want_json):
+        seen.append(float(spec.get("timeout_s", 90)))
+        raise LLMError("nope", retryable=False)
+
+    monkeypatch.setitem(PROVIDERS, "always_429", provider)
+    with pytest.raises(LLMError):
+        _slow_chain(monkeypatch).complete("s", "u", deadline_s=10)
+    assert seen and max(seen) <= 10, f"request timeouts {seen} exceed a 10s budget"
+
+
+def test_an_exhausted_budget_stops_trying_further_providers(always_429, monkeypatch):
+    monkeypatch.setattr("applier.llm.router.time.sleep", lambda s: None)
+    with pytest.raises(LLMError) as e:
+        _slow_chain(monkeypatch).complete("s", "u", deadline_s=-1)
+    assert "out of time" in str(e.value)
+    assert always_429["n"] == 0, "nothing should be attempted past the deadline"

@@ -917,7 +917,10 @@ function preflightCard() {
   button.addEventListener('click', async () => {
     button.disabled = true;
     clear(results);
-    results.appendChild(el('div', { class: 'dim small' }, 'Checking…'));
+    results.appendChild(el('div', { class: 'dim small' },
+      'Checking… this renders a real PDF and makes a real model call, '
+      + 'so it takes about half a minute. The model call is capped, so it '
+      + 'cannot sit here indefinitely.'));
     try {
       const report = await post('/api/preflight', { deep: true });
       clear(results);
@@ -925,10 +928,16 @@ function preflightCard() {
       for (const c of report.checks) {
         const tone = c.ok ? 'ok' : (c.blocking ? 'bad' : 'warn');
         const label = c.ok ? 'ok' : (c.blocking ? 'blocked' : 'warn');
+        /* How long it took, beside what it found. Preflight shows nothing
+         * until every check is done, so one slow check reads as a frozen
+         * program; naming the seconds is what tells you to wait rather than
+         * kill it. Only worth the space once a check is actually slow. */
         tb.appendChild(el('tr', {},
           el('td', { class: 'shrink' }, pill(label, tone)),
           el('td', { class: 'shrink' }, c.name),
-          el('td', { class: 'small dim' }, c.detail || '—')));
+          el('td', { class: 'small dim' }, c.detail || '—'),
+          el('td', { class: 'shrink small dim right' },
+            c.seconds >= 1 ? `${c.seconds.toFixed(1)}s` : '')));
         if (!c.ok && c.fix) {
           /* The browser is the one failure with a repair the program can
            * perform itself. Telling somebody to run `playwright install`

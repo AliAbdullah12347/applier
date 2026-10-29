@@ -217,6 +217,11 @@ class Redactor:
 # --------------------------------------------------------------------------- #
 # providers
 # --------------------------------------------------------------------------- #
+def _affordable(remaining: float | None, wait: float) -> bool:
+    """Is there budget to sleep `wait` and still have a chance afterwards?"""
+    return remaining is None or remaining - wait > 1.0
+
+
 def _post(url: str, *, headers: dict, payload: dict, timeout: float) -> dict:
     try:
         r = httpx.post(url, headers=headers, json=payload, timeout=timeout)
@@ -462,8 +467,19 @@ class Router:
         task: str | None = None,
         want_json: bool = False,
         redact: bool | None = None,
+        deadline_s: float | None = None,
     ) -> LLMResponse:
-        """Run a completion through the chain. Raises LLMError if all links fail."""
+        """Run a completion through the chain. Raises LLMError if all links fail.
+
+        `deadline_s` caps the whole call, retries and backoff included. The
+        ladder below is right for real work -- four providers, four attempts
+        each, waits up to ninety seconds -- and is twenty minutes in the
+        worst case. A caller that is holding a person in front of a progress
+        bar cannot spend that, and before this existed, preflight did: it
+        looked hung because it was waiting on a rate-limit backoff nobody
+        could see. The budget is a ceiling, never a target; without one
+        nothing changes.
+        """
         do_redact = self.redactor is not None if redact is None else (redact and self.redactor)
         if do_redact and self.redactor:
             system = self.redactor.scrub(system)
@@ -473,7 +489,24 @@ class Router:
         backoff = list(self.s.get("llm.rate_limit.retry_backoff_s", [2, 8, 30, 90]))
         errors: list[str] = []
 
+        started = time.monotonic()
+
+        def left() -> float | None:
+            """Seconds of budget remaining, or None when unbounded."""
+            if deadline_s is None:
+                return None
+            return deadline_s - (time.monotonic() - started)
+
         for spec in self._chain(task):
+            remaining = left()
+            if remaining is not None:
+                if remaining <= 0:
+                    errors.append(f"out of time after {deadline_s:.0f}s; "
+                                  f"providers left untried")
+                    break
+                # A request may not outlive the budget that contains it.
+                spec = {**spec, "timeout_s": min(
+                    float(spec.get("timeout_s", 90)), remaining)}
             provider = spec.get("provider")
             fn = PROVIDERS.get(provider)
             if not fn:
@@ -506,15 +539,20 @@ class Router:
                     wait = e.retry_after or backoff[min(attempt, len(backoff) - 1)]
                     errors.append(f"{provider}: 429 (waited {wait}s)")
                     self._record(spec, task, None, str(e))
-                    if attempt < attempts - 1:
+                    if attempt < attempts - 1 and _affordable(left(), wait):
                         time.sleep(wait)
+                    elif attempt < attempts - 1:
+                        break      # the wait alone would spend what is left
                 except LLMError as e:
                     errors.append(f"{provider}: {e}")
                     self._record(spec, task, None, str(e))
                     if not e.retryable:
                         break
-                    if attempt < attempts - 1:
-                        time.sleep(backoff[min(attempt, len(backoff) - 1)])
+                    wait = backoff[min(attempt, len(backoff) - 1)]
+                    if attempt < attempts - 1 and _affordable(left(), wait):
+                        time.sleep(wait)
+                    elif attempt < attempts - 1:
+                        break
 
         raise LLMError("All LLM providers failed:\n  " + "\n  ".join(errors))
 
