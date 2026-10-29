@@ -231,10 +231,14 @@ class Audit:
     # passed it.
     # Keys whose value is worth hiding even though it is short. The length
     # floor below exists because a four-character string matches half the
-    # repository -- but a GPA is exactly four characters, and "[redacted-gpa]" sat in a
+    # repository -- but a GPA is exactly four characters, and one sat in a
     # code comment in this public repository through five consecutive clean
     # audits because of it. These are matched on a word boundary so that a
     # GPA cannot fire inside a version number or a byte count.
+    #
+    # That comment quoted the value while explaining the leak, and this file
+    # is the one the scan exempts, so it went on passing. A check that is
+    # allowed to skip itself must not keep examples in it.
     SHORT_SENSITIVE_KEYS = {"gpa", "sat", "act", "dob", "ssn", "sin",
                             "passport", "nin", "student_id"}
 
@@ -312,8 +316,9 @@ class Audit:
             self.checks += 1
             for needle, key in needles.items():
                 if len(needle) < 5:
-                    # Short needles only count on a real boundary: "[redacted-gpa]" is a
-                    # GPA in "GPA [redacted-gpa]" and a coincidence in "1[redacted-gpa]76".
+                    # Short needles only count on a real boundary. A GPA is
+                    # four characters, so without one it fires inside any
+                    # longer number that happens to contain those digits.
                     hit = re.search(rf"(?<![\w.]){re.escape(needle)}(?![\w.])",
                                     text) is not None
                 else:
