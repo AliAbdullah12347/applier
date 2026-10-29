@@ -192,3 +192,47 @@ def test_a_real_archive_restores_without_complaint(tmp_path):
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr("config/bank/atoms.yaml", b"atoms: [also real, and bigger]")
     assert would_replace_real_bank_with_example(archive, root) == ""
+
+
+def test_a_backup_can_carry_one_part_without_the_rest(tmp_path):
+    """Moving a content bank between installs must not cost a database.
+
+    A full archive restored for the sake of its bank also replaces the
+    record of what has been applied to. That trade was the only way to sync
+    a bank, and it was made more than once.
+    """
+    import zipfile
+
+    from applier.backup import create, restore
+
+    src = tmp_path / "src"
+    (src / "config" / "bank").mkdir(parents=True)
+    (src / "data").mkdir()
+    (src / "config" / "bank" / "atoms.yaml").write_text("atoms: [new]", encoding="utf-8")
+    (src / "config" / "profile.yaml").write_text("from: source", encoding="utf-8")
+    (src / "data" / "applier.db").write_bytes(b"source database")
+
+    archive = create(tmp_path / "bank.zip", root=src, only=("config/bank",)).path
+    with zipfile.ZipFile(archive) as zf:
+        names = [n for n in zf.namelist() if not n.endswith(".json")]
+    assert all(n.startswith("config/bank/") for n in names), names
+
+    dest = tmp_path / "dest"
+    (dest / "config" / "bank").mkdir(parents=True)
+    (dest / "data").mkdir()
+    (dest / "config" / "bank" / "atoms.yaml").write_text("atoms: [old]", encoding="utf-8")
+    (dest / "config" / "profile.yaml").write_text("from: destination", encoding="utf-8")
+    (dest / "data" / "applier.db").write_bytes(b"destination database")
+
+    restore(archive, root=dest, overwrite=True)
+    assert (dest / "config" / "bank" / "atoms.yaml").read_text(encoding="utf-8") == "atoms: [new]"
+    assert (dest / "config" / "profile.yaml").read_text(encoding="utf-8") == "from: destination"
+    assert (dest / "data" / "applier.db").read_bytes() == b"destination database"
+
+
+def test_a_backup_of_nothing_says_so_rather_than_writing_an_empty_archive(tmp_path):
+    from applier.backup import create
+
+    (tmp_path / "config").mkdir()
+    with pytest.raises(FileNotFoundError, match="nothing to back up"):
+        create(tmp_path / "x.zip", root=tmp_path, only=("does/not/exist",))

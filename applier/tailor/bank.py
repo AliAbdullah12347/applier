@@ -187,6 +187,15 @@ def date_key(dates: str) -> tuple[int, int]:
     return (max(stamps), min(stamps))
 
 
+# How much of the bank one opening verb may claim before it is worth saying
+# so. About a third of the bank reaches any given page, so a verb opening
+# this share of it lands three or four times on every resume -- which is the
+# point at which a reader stops seeing achievements and starts seeing a
+# template. Advisory: the words are the author's, and which ones to change
+# is a question about their voice, not about the page.
+OPENER_SHARE = 0.10
+OPENER_MIN = 6
+
 _SKILL_STOPWORDS = {"and", "or", "of", "the", "for", "with", "in", "on", "a"}
 
 
@@ -403,7 +412,34 @@ class Bank:
                     self.resolve(text, strict=True)
                 except BankError as e:
                     problems.append((BLOCKING, f"{a.id}.{size}: {e}"))
+
+        problems += self._repeated_openers()
         return problems
+
+    def _repeated_openers(self) -> list[tuple[str, str]]:
+        """Verbs that open so many bullets they reach every page together."""
+        counts: dict[str, list[str]] = {}
+        for a in self.atoms:
+            if a.section not in RENDERABLE_SECTIONS:
+                continue
+            text, _ = self.resolve(a.text("medium"), strict=False)
+            m = re.match(r"\s*([A-Za-z]+)", text or "")
+            if m:
+                counts.setdefault(m.group(1).lower(), []).append(a.id)
+
+        total = max(1, sum(len(v) for v in counts.values()))
+        out: list[tuple[str, str]] = []
+        for verb, ids in sorted(counts.items(), key=lambda kv: -len(kv[1])):
+            if len(ids) < OPENER_MIN or len(ids) / total < OPENER_SHARE:
+                continue
+            out.append((ADVISORY,
+                        f"{len(ids)} of {total} bullets open with {verb!r} "
+                        f"({len(ids) / total:.0%}), so three or four land on "
+                        f"every page together and the section reads as a "
+                        f"template. Rewording a few is enough: "
+                        f"{', '.join(ids[:6])}"
+                        + (" ..." if len(ids) > 6 else "")))
+        return out
 
     def lint(self) -> list[str]:
         """Every finding, worst first. What `bank lint` and the panel show."""

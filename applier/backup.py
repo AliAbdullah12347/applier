@@ -58,12 +58,28 @@ def _wanted(path: Path) -> bool:
     return not path.name.endswith(EXCLUDE_SUFFIXES)
 
 
-def create(dest: Path | None = None, *, root: Path | None = None) -> BackupResult:
-    """Write a zip of everything that cannot be regenerated."""
+def create(dest: Path | None = None, *, root: Path | None = None,
+           only: tuple[str, ...] | None = None) -> BackupResult:
+    """Write a zip of everything that cannot be regenerated.
+
+    `only` narrows it to particular top-level paths, which exists for one
+    recurring problem: moving a content bank between two installs without
+    touching either one's database. A full archive restored for the sake of
+    its bank also replaces the record of what has been applied to, and that
+    is a bad trade for a file you could have copied.
+
+        create(only=("config/bank",))
+    """
     root = root or ROOT
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = Path(dest) if dest else root / "out" / f"applier-backup-{stamp}.zip"
     dest.parent.mkdir(parents=True, exist_ok=True)
+
+    tops = tuple(only) if only else INCLUDE
+    unknown = [t for t in tops if not (root / t).exists()]
+    if only and len(unknown) == len(tops):
+        raise FileNotFoundError(
+            f"nothing to back up: none of {', '.join(tops)} exists under {root}")
 
     files = 0
     total = 0
@@ -71,7 +87,7 @@ def create(dest: Path | None = None, *, root: Path | None = None) -> BackupResul
     # backup never replaces a good one with a truncated one.
     staging = dest.with_suffix(".zip.partial")
     with zipfile.ZipFile(staging, "w", zipfile.ZIP_DEFLATED) as zf:
-        for top in INCLUDE:
+        for top in tops:
             base = root / top
             if not base.exists():
                 continue
@@ -86,7 +102,7 @@ def create(dest: Path | None = None, *, root: Path | None = None) -> BackupResul
             "root": str(root),
             "files": files,
             "bytes": total,
-            "includes": list(INCLUDE),
+            "includes": list(tops),
             "note": "API keys are NOT in this archive. They live in the OS "
                     "keychain and must be set again with `applier config set-key`.",
         }, indent=2))

@@ -181,3 +181,50 @@ def test_the_panel_counts_claims_not_the_sections_holding_them():
     assert _count_claims(claims) == 3
     assert _count_claims(claims, status="RETIRED") == 1
     assert _count_claims({}) == 0
+
+
+# --------------------------------------------------------------------------- #
+# one verb opening a sixth of the bank
+# --------------------------------------------------------------------------- #
+def _bank_of(openers: list[str], tmp_path) -> Bank:
+    body = ["## Experience", "", "### A Role", "id: exp_a", "dates: 2026",
+            "tags: python", ""]
+    for i, verb in enumerate(openers):
+        body.append(f"- {verb} the component number {i} that needed doing.")
+    master = tmp_path / "master.md"
+    master.write_text("\n".join(body) + "\n", encoding="utf-8")
+    build_bank(master, tmp_path, write=True)
+    return Bank(tmp_path)
+
+
+def test_a_verb_opening_most_of_the_bank_is_reported(tmp_path):
+    """About a third of the bank reaches any page, so a verb on a sixth of
+    it lands three or four times together and the section reads as a form."""
+    bank = _bank_of(["Built"] * 10 + ["Designed", "Ran"], tmp_path)
+    found = [p for p in bank.advisory_problems() if "open with" in p]
+    assert found, bank.lint()
+    assert "'built'" in found[0]
+
+
+def test_a_varied_bank_is_not_nagged(tmp_path):
+    verbs = ["Built", "Designed", "Ran", "Shipped", "Measured", "Tuned",
+             "Wrote", "Traced", "Rebuilt", "Proved", "Cut", "Mapped"]
+    bank = _bank_of(verbs, tmp_path)
+    assert not [p for p in bank.lint() if "open with" in p]
+
+
+def test_a_repeated_verb_in_a_small_bank_is_not_worth_saying(tmp_path):
+    """Three bullets opening alike is a coincidence, not a pattern."""
+    bank = _bank_of(["Built", "Built", "Designed"], tmp_path)
+    assert not [p for p in bank.lint() if "open with" in p]
+
+
+def test_the_wording_is_never_a_reason_to_refuse_a_render(tmp_path):
+    bank = _bank_of(["Built"] * 10 + ["Designed", "Ran"], tmp_path)
+    assert not [p for p in bank.blocking_problems() if "open with" in p]
+
+
+def test_the_finding_names_atoms_to_change(tmp_path):
+    bank = _bank_of(["Built"] * 10 + ["Designed", "Ran"], tmp_path)
+    found = next(p for p in bank.advisory_problems() if "open with" in p)
+    assert "exp_a_1" in found, found

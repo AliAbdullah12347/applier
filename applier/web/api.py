@@ -847,8 +847,11 @@ def restore_backup(body=None, **_kw) -> dict:
 def make_backup(body=None, **_kw) -> dict:
     """Write an archive of the irreplaceable files. Never contains a key."""
     from ..backup import create
+
+    raw = str((body or {}).get("only") or "").strip()
+    parts = tuple(p.strip() for p in raw.split(",") if p.strip()) or None
     from ..config import ROOT
-    result = create()
+    result = create(only=parts)
     # Shown relative to the data directory. _relativise is scoped to the
     # artifacts root, so it would have silently dropped a path under out/ --
     # and it takes a list, so passing one path raised instead.

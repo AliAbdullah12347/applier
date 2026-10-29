@@ -413,6 +413,11 @@ def backup(
     allow_example: bool = typer.Option(
         False, "--allow-example",
         help="Permit a restore that puts the shipped example bank over a real one."),
+    only: str = typer.Option(
+        None, "--only", metavar="PATH[,PATH]",
+        help="Back up just these top-level paths, e.g. config/bank. "
+             "Moves a content bank between installs without the database "
+             "riding along."),
 ) -> None:
     """Copy out the three things here that cannot be rebuilt.
 
@@ -444,7 +449,8 @@ def backup(
         con.print(f"[green]restored[/green] {len(written)} file(s)")
         return
 
-    result = create(to)
+    parts = tuple(p.strip() for p in only.split(",") if p.strip()) if only else None
+    result = create(to, only=parts)
     con.print(f"[green]backed up[/green] {result.files} file(s), "
               f"{result.megabytes:.1f} MB")
     con.print(f"  {result.path}")
